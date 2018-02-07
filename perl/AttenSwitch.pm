@@ -158,8 +158,18 @@ class_has 'validVids' => (
 );
 class_has 'validPids' => (
   is      => 'ro',
-  default => sub { [ 0x00ff, 0x0003, 0x0001, 0x0002 ] }
-);
+  default => sub { [ 0x00ff, 0x0003, 0x0001, 0x0002, 0x0004 ] }
+ );
+
+# Known devices:
+#  0x00ff - unconfigured
+#  0x0001 - USB Stacklight
+#  0x0002 - MapleOLT serdes RF mux
+#  0x0003 - USB Attenuator controller
+#  0x0004 - USB Dual SPDT
+#  0x0005 - USB air pressure sensor
+
+
 class_has 'SUCCESS'    => ( is => 'ro', default => 0 );
 class_has 'FAIL'       => ( is => 'ro', default => -1 );
 class_has 'CMD_OUT_EP' => ( is => 'rw', default => 0x1 );
