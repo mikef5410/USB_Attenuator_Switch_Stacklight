@@ -588,6 +588,32 @@ sub identify {
   return ($info);
 }
 
+=over 4
+
+=item B<< $attenswitch->blink($on) >>
+
+Ask the device to rapidly blink it's red led for easy identification.
+$on should be 1 for blink on, 0 for blink off
+
+=back
+
+=cut
+
+sub blink {
+  my $self = shift;
+  my $on = shift || 0;
+
+
+  my $outPkt = AttenSwitch::Packet->new(
+    command => AttenSwitch::COMMAND->BLINK,
+    payload => pack("C",$on)
+  );
+
+  my ( $res, $rxPacket ) = $self->send_packet($outPkt);
+  return ($res);
+}
+
+  
 __PACKAGE__->meta->make_immutable;
 1;
 
@@ -760,7 +786,7 @@ __PACKAGE__->meta->make_immutable;
 package AttenSwitch::COMMAND;
 use Class::Enum qw(ACK NAK RESET ID ECHO SSN DIAG SP8T
   AUXOUT AUXIN ATT LIGHT NOTIFY READEE
-  WRITEEE SPDT ERASEALL
+  WRITEEE SPDT ERASEALL BLINK
 );
 1;
 

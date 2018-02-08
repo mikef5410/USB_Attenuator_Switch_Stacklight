@@ -21,6 +21,9 @@
 // #define TX_QUEUE_DEBUG 1
 extern usbd_device *CDCACM_dev; //cdcacm.c
 
+xTaskHandle *xIDBlinkerTaskHandle = NULL;
+static uint8_t IDBlinkOn = 0;
+
 uint8_t inbufBytes[256];
 uint8_t outbufBytes[256];
 cmd_packet_t *instrInpktBuf = (cmd_packet_t *)&inbufBytes;
@@ -149,6 +152,48 @@ void get_instrument_ID(cmd_packet_t *buffer) {
 } // end get_instrument_ID
 
 
+static portTASK_FUNCTION(vIDBlinkerTask, pvParameters)
+{
+  (void)(pvParameters);
+  while(IDBlinkOn) {
+    redOn(0);
+    delayms(30);
+    redOn(1);
+    delayms(30);
+  }
+  return;
+}
+
+//The command CMD_BLINK(1) will cause rapid blinking of the red led. CMD_BLINK(0) will turn it off. Use to identify
+//which of many devices we're talking to.
+void id_blink(uint8_t on)
+{
+  portBASE_TYPE qStatus = pdPASS;
+  
+  if (on) {
+    if (xIDBlinkerTaskHandle != NULL) {
+      //Nothing to do
+      return;
+    } else {
+      IDBlinkOn=1;
+      qStatus = xTaskCreate(vIDBlinkerTask,"ID Blinker Task", 64, NULL, (tskIDLE_PRIORITY + 1UL), (xTaskHandle *)&xIDBlinkerTaskHandle);
+      (void)qStatus;
+    }
+  } else {
+    if (xIDBlinkerTaskHandle != NULL) {
+      IDBlinkOn=0;
+      delayms(100);
+      vTaskDelete(xIDBlinkerTaskHandle);
+      xIDBlinkerTaskHandle=NULL;
+    } else {
+      //Nothing to do;
+      return;
+    }
+  }
+  
+  return;
+}
+
 __attribute__((noreturn)) portTASK_FUNCTION(vInstrumentTask, pvParameters) {
 
   (void)pvParameters;
@@ -231,7 +276,11 @@ __attribute__((noreturn)) portTASK_FUNCTION(vInstrumentTask, pvParameters) {
       case CMD_ERASEALL:
         eeprom9366_eraseAll();
         break;
-        
+
+      case CMD_BLINK:
+        id_blink(instrInpktBuf->payload.pl_uchar.a_uchar);
+        break;
+
       default:
         dprintf("ERROR: unrecognized or NYI command: %u\r\n",instrInpktBuf->cmd);
         instrOutpktBuf->cmd = CMD_NAK;
