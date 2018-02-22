@@ -19,6 +19,7 @@ use MooseX::ClassAttribute;
 use namespace::autoclean;
 ## no critic (BitwiseOperators)
 ## no critic (ValuesAndExpressions::ProhibitAccessOfPrivateData)
+## no critic (Variables::RequireLexicalLoopIterators)
 #
 
 =head1 NAME
@@ -159,7 +160,7 @@ class_has 'validVids' => (
 class_has 'validPids' => (
   is      => 'ro',
   default => sub { [ 0x00ff, 0x0003, 0x0001, 0x0002, 0x0004 ] }
- );
+);
 
 # Known devices:
 #  0x00ff - unconfigured
@@ -168,7 +169,6 @@ class_has 'validPids' => (
 #  0x0003 - USB Attenuator controller
 #  0x0004 - USB Dual SPDT
 #  0x0005 - USB air pressure sensor
-
 
 class_has 'SUCCESS'    => ( is => 'ro', default => 0 );
 class_has 'FAIL'       => ( is => 'ro', default => -1 );
@@ -237,6 +237,17 @@ has 'product' => (
   default => '',
 );
 
+has 'device' => (
+  is      => 'rw',
+  default => undef,
+);
+
+has 'eepromSize' => (
+  is      => 'rw',
+  isa     => "Int",
+  default => 0x200,
+);
+
 =head2 METHODS
 
 =over 4
@@ -259,6 +270,10 @@ sub connect {
   my $pid;
   my $dev;
 
+  if ( defined( $self->device ) ) {
+    $dev = $self->device;
+    goto FOUND;
+  }
   foreach $vid (@vids) {
     foreach $pid (@pids) {
       if ( $self->has_SERIAL ) {
@@ -275,12 +290,14 @@ sub connect {
       }
     }
   }
+
   if ( !defined $dev ) {
     print "ERROR: could not find any AttenSwitch devices \n";
     return AttenSwitch->FAIL;
   }
 
 FOUND:
+  $self->dev($dev);
   $self->VID( $dev->idVendor() );
   $self->PID( $dev->idProduct() );
   $self->SERIAL( $dev->serial_number() );
@@ -603,14 +620,224 @@ sub blink {
   my $self = shift;
   my $on = shift || 0;
 
-
   my $outPkt = AttenSwitch::Packet->new(
     command => AttenSwitch::COMMAND->BLINK,
-    payload => pack("C",$on)
+    payload => pack( "C", $on )
   );
 
   my ( $res, $rxPacket ) = $self->send_packet($outPkt);
   return ($res);
+}
+
+# EEProm Memory Map
+# 0 - Magic. 0xAA if it's not there, don't read eeprom
+# 1,2 - VID little endian
+# 3,4 - PID little endian
+# 5,6 - Mfg pointer. Address of Mfg string. If ptr or length are zero, don't read.
+# 7 - Mfg length
+# 8,9 - Product string pointer (LE).
+# A - Product string length
+# B,C - Serial number pointer (LE).
+# D  - Serial number length
+# E  - S1 is pulse high (boolean)
+# F  - S2 is pulse high (boolean)
+# 10,11 - Extra string ptr.
+# 12 - Extra string length.
+#
+# Strings should start at 0x30 to leave room.
+
+=over 4
+
+=item B<< $attenswitch->eeMagic($value) >>
+
+Read/Write the magic value from EEprom. If called without args, read. Else write.
+Magic is one byte, 0xAA to indicate EEprom is valid.
+
+=back
+
+=cut
+
+sub eeMagic {
+  my $self = shift;
+  my $val  = shift;    #number
+
+  if ( defined($val) ) {    # Writing
+    $val = $val + 0;
+    $val = $val & 0xff;
+    $self->writeEE( 0, pack( "C", $val ) );
+  } else {                  #reading
+    $val = unpack( "C", $self->readEE( 0, 1 ) );
+  }
+  return ( $val + 0 );
+}
+
+=over 4
+
+=item B<< ($vid,$pid) = $attenswitch->eeVidPid($vid,$pid) >>
+
+Read/Write the VID and PID values from EEprom. If called without PID, read. Else write.
+VID will default to our default VID if undef. VID and PID are 16 bit numbers.
+
+=back
+
+=cut
+
+sub eeVidPid {
+  my $self = shift;
+  my $vid  = shift || AttenSwitch->validVids()->[0];
+  my $pid  = shift;
+
+  if ( defined($pid) ) {    # Writing
+    $vid &= 0xffff;
+    $pid &= 0xffff;
+    $self->writeEE( 1, pack( "vv", $vid, $pid ) );
+  } else {                  #Reading
+    ( $vid, $pid ) = unpack( "vv", $self->readEE( 1, 4 ) );
+  }
+  return ( $vid, $pid );
+}
+
+=over 4
+
+=item B<< $stringArrayref = $attenswitch->readEEStrings() >>
+
+Read the EEprom strings and return in an array reference:
+$stringArrayref->[0] = Manufacturer string,
+$stringArrayref->[1] = Product string,
+$stringArrayref->[2] = Serial number string,
+$stringArrayref->[3] = Extra string
+
+=back
+
+=cut
+
+sub readEEStrings {
+  my $self = shift;
+
+  my @strings = ( "", "", "", "" );
+  my ( $mfgP,   $mfgL )   = unpack( "vC", $self->readEE( 5,    3 ) );
+  my ( $prdP,   $prdL )   = unpack( "vC", $self->readEE( 8,    3 ) );
+  my ( $serP,   $serL )   = unpack( "vC", $self->readEE( 0xb,  3 ) );
+  my ( $extraP, $extraL ) = unpack( "vC", $self->readEE( 0x10, 3 ) );
+
+  if ( $self->validStr( $mfgP, $mfgL ) ) {
+    $strings[0] = $self->readEE( $mfgP, $mfgL );
+  }
+
+  if ( $self->validStr( $prdP, $prdL ) ) {
+    $strings[1] = $self->readEE( $prdP, $prdL );
+  }
+
+  if ( $self->validStr( $serP, $serL ) ) {
+    $strings[2] = $self->readEE( $serP, $serL );
+  }
+
+  if ( $self->validStr( $extraP, $extraL ) ) {
+    $strings[3] = $self->readEE( $extraP, $extraL );
+  }
+
+  return ( \@strings );
+}
+
+sub validStr {
+  my $self = shift;
+  my $ptr  = shift;
+  my $len  = shift;
+
+  return (0) if ( $ptr < 0x20 );
+
+  return (0) if ( $len == 0 );
+
+  return (0) if ( ( $ptr + $len ) >= $self->eepromSize );
+
+  return (1);
+}
+
+=over 4
+
+=item B<< $attenswitch->writeEEStrings($stringArrayref) >>
+
+Write the EEprom strings:
+$stringArrayref->[0] = Manufacturer string,
+$stringArrayref->[1] = Product string,
+$stringArrayref->[2] = Serial number string,
+$stringArrayref->[3] = Extra string
+
+=back
+
+=cut
+
+sub writeEEStrings {
+  my $self      = shift;
+  my $stringRef = shift;
+
+  $stringRef->[0] = "" if ( !defined( $stringRef->[0] ) );
+  $stringRef->[1] = "" if ( !defined( $stringRef->[1] ) );
+  $stringRef->[2] = "" if ( !defined( $stringRef->[2] ) );
+  $stringRef->[3] = "" if ( !defined( $stringRef->[3] ) );
+
+  my $addr = 0x30;
+
+  #Manufacturer string
+  if ( length( $stringRef->[0] ) ) {
+    $self->writeEE( 0x5, pack( "vC", $addr, length( $stringRef->[0] ) ) );
+    $self->writeEE( $addr, $stringRef->[0] );
+    $addr += length( $stringRef->[0] );
+  } else {
+    $self->writeEE( 0x5, pack( "vC", 0, 0 ) );
+  }
+
+  #Product string
+  if ( length( $stringRef->[1] ) ) {
+    $self->writeEE( 0x8, pack( "vC", $addr, length( $stringRef->[1] ) ) );
+    $self->writeEE( $addr, $stringRef->[1] );
+    $addr += length( $stringRef->[1] );
+  } else {
+    $self->writeEE( 0x8, pack( "vC", 0, 0 ) );
+  }
+
+  #Serial string
+  if ( length( $stringRef->[2] ) ) {
+    $self->writeEE( 0xb, pack( "vC", $addr, length( $stringRef->[2] ) ) );
+    $self->writeEE( $addr, $stringRef->[2] );
+    $addr += length( $stringRef->[2] );
+  } else {
+    $self->writeEE( 0xb, pack( "vC", 0, 0 ) );
+  }
+
+  #Extra string
+  if ( length( $stringRef->[3] ) ) {
+    $self->writeEE( 0x10, pack( "vC", $addr, length( $stringRef->[3] ) ) );
+    $self->writeEE( $addr, $stringRef->[3] );
+    $addr += length( $stringRef->[3] );
+  } else {
+    $self->writeEE( 0x10, pack( "vC", 0, 0 ) );
+  }
+
+}
+
+=over 4
+
+=item B<< ($s1pol,$s2pol) = $attenswitch->eePolarity($s1pol,$s2pol) >>
+
+Read/Write the S1 & S2 polarity values from EEprom. If called without S1 polarity, read. Else write.
+$s1pol and $s2pol are booleans. 1 = pulse high, 0 = pulse low.
+
+=back
+
+=cut
+
+sub eePolarity {
+  my $self  = shift;
+  my $s1pol = shift;
+  my $s2pol = shift || $s1pol;
+
+  if ( defined($s1pol) ) {    #Writing
+    $self->writeEE( 0xe, pack( "CC", ( $s1pol != 0 ), ( $s2pol != 0 ) ) );
+  } else {
+    ( $s1pol, $s2pol ) = unpack( "CC", $self->readEE( 0xe, 2 ) );
+  }
+  return ( $s1pol, $s2pol );
 }
 
 __PACKAGE__->meta->make_immutable;
@@ -723,6 +950,7 @@ sub dump {
   my $adj = 16 - ( $j % 16 );
   print '   ' x $adj, "   ", $ascii, "\n";
 }
+
 __PACKAGE__->meta->make_immutable;
 1;
 
@@ -818,4 +1046,5 @@ use Class::Enum (
   PROD_ATTEN70    => { ordinal => 3 },
   PROD_DUALSPDT   => { ordinal => 4 },
 );
+
 1;

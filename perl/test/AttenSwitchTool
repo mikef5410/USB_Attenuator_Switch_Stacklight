@@ -1,0 +1,578 @@
+#!/usr/bin/perl
+#
+
+use strict;
+use warnings;
+use FindBin qw($Bin);
+
+use lib $ENV{BCOM_PERL} || "/projects/Bcom-perl";
+use lib $ENV{PERL_GPIB} || "/projects/gpib";
+use lib "$Bin/..";
+use lib $Bin;
+
+use feature 'state';
+
+use Module::Runtime qw(use_module use_package_optimistically);
+use Device::USB;
+use Data::Dumper qw(Dumper);
+use AttenSwitch;
+
+use Gtk3 '-init';
+use Gtk3::SimpleList;
+use Glib 'TRUE', 'FALSE';
+
+## no critic (ValuesAndExpressions::ProhibitAccessOfPrivateData)
+
+$| = 1;
+
+my $builder      = Gtk3::Builder->new();
+my $gladef       = "AttenSwitchTool.glade";
+my $glade        = $gladef;
+my $VID          = 0x4161;
+my $usb          = Device::USB->new();
+my @Devices      = ();
+my $currentDev   = undef;
+my $rescanActive = 0;
+my $s1s2Gang     = 0;
+my $gladestr     = "";
+
+loadUIfromData( \$gladestr );
+if ( length($gladestr) ) {
+  $builder->add_from_string($gladestr);
+} else {
+  if ( -f "$Bin/$gladef" ) {
+    $glade = "$Bin/$gladef";
+  } else {
+
+    #Search @INC for my glade file
+    foreach my $d (@INC) {
+      $glade = $d . "/" . $gladef;
+      last if ( -f $glade );
+    }
+  }
+  $builder->add_from_file($glade);
+}
+
+$builder->connect_signals();
+
+$builder->get_object('mainTopWin')->show_all;
+setupBrowserTree();
+
+#rescanButton_clicked_cb();
+Gtk3->main;    #Start the event loop
+exit(0);
+
+sub gtk_main_quit {
+  if ( defined($currentDev) ) {
+    $currentDev->disconnect();
+    undef($currentDev);
+  }
+  Gtk3->main_quit();
+}
+
+sub loadUIfromData {
+  my $strref = shift;
+
+  while (<DATA>) {
+    s/^\s*$//g;
+    $$strref .= $_;
+  }
+}
+
+sub statusbar {
+  my $str = shift;
+
+  my $StatusBar = $builder->get_object('statusbar');
+  $StatusBar->remove_all(1);
+  $StatusBar->push( 1, $str );
+}
+
+#Scan the usb bus and build tree
+sub rescanButton_clicked_cb {
+  my $widget = shift;
+  my $data   = shift;
+
+  $rescanActive = 1;
+  if ( defined($currentDev) ) {
+    $currentDev->disconnect();
+    undef($currentDev);
+    statusbar("disconnected.");
+  }
+  my $usbListStore = $builder->get_object('usbListStore');
+  clearListStore($usbListStore);
+  @Devices = ();
+  my $ix = 0;
+  my $ls = $usb->list_devices( $VID, undef );
+  foreach my $dev ( @{$ls} ) {
+    my $vend    = $dev->{descriptor}->{idVendor};
+    my $prod    = $dev->{descriptor}->{idProduct};
+    my $serIx   = $dev->{descriptor}->{iSerialNumber};
+    my $serial  = $dev->serial_number();
+    my $mfg     = $dev->manufacturer();
+    my $product = $dev->product();
+    my $iter    = $usbListStore->insert_with_values(
+      -1,
+      0 => sprintf( "0x%04x", $vend ),
+      1 => sprintf( "0x%04x", $prod ),
+      2 => $mfg,
+      3 => $product,
+      4 => $serial,
+      5 => $ix
+    );
+    $Devices[ $ix++ ] = $dev;
+  }
+  statusbar( sprintf( "%d devices found.", $ix ) );
+  $rescanActive = 0;
+}
+
+sub clearListStore {
+  my $l    = shift;
+  my $iter = $l->get_iter_from_string("0");
+
+  my $ok = 1;
+  while ( $iter && $ok ) {
+    $ok = $l->remove($iter);
+  }
+}
+
+sub setupBrowserTree {
+  my $t = $builder->get_object('browserTreeView');
+
+  $t->append_column( makeColumn( 0, "Vid" ) );
+  $t->append_column( makeColumn( 1, "Pid" ) );
+  $t->append_column( makeColumn( 2, "Mfg" ) );
+  $t->append_column( makeColumn( 3, "Product" ) );
+  $t->append_column( makeColumn( 4, "Serial" ) );
+}
+
+sub makeColumn {
+  my $col   = shift;
+  my $title = shift;
+
+  my $column = Gtk3::TreeViewColumn->new_with_attributes( $title, Gtk3::CellRendererText->new, text => $col );
+  $column->set_resizable(TRUE);
+  return ($column);
+}
+
+#Cause selected device to blink
+sub blinkButton_clicked_cb {
+  my $widget = shift;
+  my $data   = shift;
+  state $blink = 0;
+
+  return if ( !defined($currentDev) );
+  if ($blink) {
+    $currentDev->blink(0);
+    $blink = 0;
+  } else {
+    $currentDev->blink(1);
+    $blink = 1;
+  }
+}
+
+sub browserTreeView_selected {
+  my $widget = shift;
+  my $data   = shift;
+
+  return if ($rescanActive);
+  my $t = $builder->get_object('browserTreeView');
+  my ( $path, $col ) = $t->get_cursor();
+  my $model = $t->get_model();
+  my $iter  = $model->get_iter($path);
+  my $dev   = $Devices[ $model->get_value( $iter, 5 ) ];
+  my $prod  = $model->get_value( $iter, 3 );
+  if ( defined($currentDev) && defined( $currentDev->dev ) ) {
+    $currentDev->disconnect();
+  }
+  $currentDev = AttenSwitch->new( device => $dev );
+  $currentDev->connect();
+  statusbar( sprintf( "connected to %s %s", $prod, $model->get_value( $iter, 4 ) ) );
+
+SW: {
+    if ( $currentDev->PID == 0x0001 ) {    #Stacklight
+      $builder->get_object("spdtFrame")->set_sensitive(0);
+      $builder->get_object("sp8tFrame")->set_sensitive(0);
+      $builder->get_object("attenFrame")->set_sensitive(0);
+      $builder->get_object("spdtPolarityFrame")->set_sensitive(0);
+      last SW;
+    }
+    if ( $currentDev->PID == 0x0002 ) {    #MapleOLT test rig
+      $builder->get_object("spdtFrame")->set_sensitive(1);
+      $builder->get_object("sp8tFrame")->set_sensitive(1);
+      $builder->get_object("attenFrame")->set_sensitive(0);
+      $builder->get_object("spdtPolarityFrame")->set_sensitive(1);
+      last SW;
+    }
+    if ( $currentDev->PID == 0x0003 ) {    #Attenuator
+      $builder->get_object("spdtFrame")->set_sensitive(0);
+      $builder->get_object("sp8tFrame")->set_sensitive(0);
+      $builder->get_object("attenFrame")->set_sensitive(1);
+      $builder->get_object("spdtPolarityFrame")->set_sensitive(0);
+      last SW;
+    }
+    if ( $currentDev->PID == 0x0004 ) {    #Dual SPDT
+      $builder->get_object("spdtFrame")->set_sensitive(1);
+      $builder->get_object("sp8tFrame")->set_sensitive(0);
+      $builder->get_object("attenFrame")->set_sensitive(0);
+      $builder->get_object("spdtPolarityFrame")->set_sensitive(1);
+      last SW;
+    }
+
+    #unknown
+    $builder->get_object("spdtFrame")->set_sensitive(1);
+    $builder->get_object("sp8tFrame")->set_sensitive(1);
+    $builder->get_object("attenFrame")->set_sensitive(1);
+  }
+}
+
+sub spdtGangButton_clicked_cb {
+  my $widget = shift;
+  my $data   = shift;
+
+  my $s2a = $builder->get_object("s2a_rb");
+  my $s2b = $builder->get_object("s2b_rb");
+  $s1s2Gang = ( $widget->get_active() + 0 );
+
+  if ($s1s2Gang) {
+    $s2a->set_sensitive(0);
+    $s2b->set_sensitive(0);
+  } else {
+    $s2a->set_sensitive(1);
+    $s2b->set_sensitive(1);
+  }
+}
+
+sub s1_clicked {
+  my $widget = shift;
+  my $data   = shift;
+
+  my $s1a = $builder->get_object("s1a_rb");
+  my $s2a = $builder->get_object("s2a_rb");
+  return if ( !defined($currentDev) );
+  if ( $s1a->get_active() ) {
+    $currentDev->spdt( AttenSwitch::SPDTSEL::SW1, AttenSwitch::SPDTSETTING::J1SEL );
+    if ($s1s2Gang) {
+      $currentDev->spdt( AttenSwitch::SPDTSEL::SW2, AttenSwitch::SPDTSETTING::J1SEL );
+    }
+  } else {
+    $currentDev->spdt( AttenSwitch::SPDTSEL::SW1, AttenSwitch::SPDTSETTING::J2SEL );
+    if ($s1s2Gang) {
+      $currentDev->spdt( AttenSwitch::SPDTSEL::SW2, AttenSwitch::SPDTSETTING::J2SEL );
+    }
+  }
+}
+
+sub s2_clicked {
+  my $widget = shift;
+  my $data   = shift;
+
+  my $s1a = $builder->get_object("s2a_rb");
+  return if ( !defined($currentDev) );
+  if ( $s1a->get_active() ) {
+    $currentDev->spdt( AttenSwitch::SPDTSEL::SW2, AttenSwitch::SPDTSETTING::J1SEL );
+  } else {
+    $currentDev->spdt( AttenSwitch::SPDTSEL::SW2, AttenSwitch::SPDTSETTING::J2SEL );
+  }
+}
+
+sub sp8t_clicked {
+  my $widget = shift;
+  my $data   = shift;
+
+  #We get triggered twice. Once for the button that goes on, and once for the button that goes off.
+  #Ignore one of them
+  state $secondEvent= 0;
+  if ( $secondEvent == 1 ) {
+    $secondEvent = 0;
+    return;
+  }
+  $secondEvent = 1;
+  return if ( !defined($currentDev) );
+
+SW: {
+    if ( $builder->get_object("sp8t_j1")->get_active() ) {
+      $currentDev->sp8t(AttenSwitch::SP8TSETTING::J1);
+      last SW;
+    }
+    if ( $builder->get_object("sp8t_j2")->get_active() ) {
+      $currentDev->sp8t(AttenSwitch::SP8TSETTING::J2);
+      last SW;
+    }
+    if ( $builder->get_object("sp8t_j3")->get_active() ) {
+      $currentDev->sp8t(AttenSwitch::SP8TSETTING::J3);
+      last SW;
+    }
+    if ( $builder->get_object("sp8t_j4")->get_active() ) {
+      $currentDev->sp8t(AttenSwitch::SP8TSETTING::J4);
+      last SW;
+    }
+    if ( $builder->get_object("sp8t_j5")->get_active() ) {
+      $currentDev->sp8t(AttenSwitch::SP8TSETTING::J5);
+      last SW;
+    }
+    if ( $builder->get_object("sp8t_j6")->get_active() ) {
+      $currentDev->sp8t(AttenSwitch::SP8TSETTING::J6);
+      last SW;
+    }
+    if ( $builder->get_object("sp8t_j7")->get_active() ) {
+      $currentDev->sp8t(AttenSwitch::SP8TSETTING::J7);
+      last SW;
+    }
+    if ( $builder->get_object("sp8t_j8")->get_active() ) {
+      $currentDev->sp8t(AttenSwitch::SP8TSETTING::J8);
+      last SW;
+    }
+  }
+}
+
+sub attenCtrlAdj_value_changed_cb {
+  my $widget = shift;
+  my $data   = shift;
+
+  return if ( !defined($currentDev) );
+
+  my $value = $widget->get_value();
+  $value = 10 * int( ( $value / 10 ) + 0.5 );
+  $value = ( $value < 0 )  ? 0  : $value;
+  $value = ( $value > 70 ) ? 70 : $value;
+  $widget->set_value($value);
+
+  my $setting;
+SW: {
+    if ( $value == 0 ) {
+      $setting = AttenSwitch::ATTEN::ATT_0DB;
+      last SW;
+    }
+    if ( $value == 10 ) {
+      $setting = AttenSwitch::ATTEN::ATT_10DB;
+      last SW;
+    }
+    if ( $value == 20 ) {
+      $setting = AttenSwitch::ATTEN::ATT_20DB;
+      last SW;
+    }
+    if ( $value == 30 ) {
+      $setting = AttenSwitch::ATTEN::ATT_30DB;
+      last SW;
+    }
+    if ( $value == 40 ) {
+      $setting = AttenSwitch::ATTEN::ATT_40DB;
+      last SW;
+    }
+    if ( $value == 50 ) {
+      $setting = AttenSwitch::ATTEN::ATT_50DB;
+      last SW;
+    }
+    if ( $value == 60 ) {
+      $setting = AttenSwitch::ATTEN::ATT_60DB;
+      last SW;
+    }
+    if ( $value == 70 ) {
+      $setting = AttenSwitch::ATTEN::ATT_70DB;
+      last SW;
+    }
+  }
+  $currentDev->atten($setting);
+}
+
+sub EEpromViewport_map_cb {
+  return if ( !defined($currentDev) );
+
+  #printf("EEprom tab entered.\n");
+
+  my $magic       = 0 + $currentDev->eeMagic();
+  my $vidEntry    = $builder->get_object('vidEntry');
+  my $pidEntry    = $builder->get_object('pidEntry');
+  my $prodEntry   = $builder->get_object('prodEntry');
+  my $serialEntry = $builder->get_object('serialEntry');
+  my $extraEntry  = $builder->get_object('extraEntry');
+  my $s1High      = $builder->get_object('s1High');
+  my $s2High      = $builder->get_object('s2High');
+
+  # if ($magic != 0xAA) { #Invalid EEprom
+  #   $vidEntry->set_text("");
+  #   $pidEntry->set_text("");
+  #   $prodEntry->set_text("");
+  #   $serialEntry->set_text("");
+  #   $extraEntry->set_text("");
+  #   $s1High->set_active(0);
+  #   $s2High->set_active(0);
+  #   return;
+  # }
+
+  my $strings = $currentDev->readEEStrings();
+  my ( $vid,   $pid )   = $currentDev->eeVidPid();
+  my ( $s1pol, $s2pol ) = $currentDev->eePolarity();
+
+  $vidEntry->set_text( sprintf( "0x%04x", $vid ) );
+  $pidEntry->set_text( sprintf( "0x%04x", $pid ) );
+  $prodEntry->set_text( $strings->[1] );
+  $serialEntry->set_text( $strings->[2] );
+  $extraEntry->set_text( $strings->[3] );
+
+  $s1High->set_active( $s1pol != 0 );
+  $s2High->set_active( $s2pol != 0 );
+  return;
+}
+
+sub aboutActivated {
+  my $about_dialog = $builder->get_object('aboutDialog');
+
+  $about_dialog->run();
+  $about_dialog->hide();
+}
+
+sub writePolarity_clicked {
+  my $widget = shift;
+  my $data   = shift;
+
+  return if ( !defined($currentDev) );
+  $currentDev->blink(1);
+
+  if ( !confirmWrite() ) {
+    $currentDev->blink(0);
+    return;
+  }
+  my $s1pol = $builder->get_object('s1High')->get_active();
+  my $s2pol = $builder->get_object('s2High')->get_active();
+  $currentDev->eePolarity( $s1pol, $s2pol );
+
+  $currentDev->blink(0);
+  return;
+}
+
+sub writeStrings_clicked {
+  my $widget = shift;
+  my $data   = shift;
+
+  return if ( !defined($currentDev) );
+  $currentDev->blink(1);
+
+  if ( !confirmWrite() ) {
+    $currentDev->blink(0);
+    return;
+  }
+  my $strings;
+  $strings->[0] = "";
+  $strings->[1] = $builder->get_object('prodEntry')->get_text();
+  $strings->[2] = $builder->get_object('serialEntry')->get_text();
+  $strings->[3] = $builder->get_object('extraEntry')->get_text();
+  $currentDev->writeEEStrings($strings);
+  $currentDev->blink(0);
+}
+
+sub writeVidPid_clicked {
+  my $widget = shift;
+  my $data   = shift;
+
+  return if ( !defined($currentDev) );
+
+  $currentDev->blink(1);
+  if ( !confirmWrite() ) {
+    $currentDev->blink(0);
+    return;
+  }
+
+  my $vid = hex( $builder->get_object('vidEntry')->get_text() );
+  my $pid = hex( $builder->get_object('pidEntry')->get_text() );
+  $currentDev->eeMagic(0xAA);
+  $currentDev->eeVidPid( $vid, $pid );
+  $currentDev->blink(0);
+}
+
+sub eraseEEbutton_clicked_cb {
+  my $widget = shift;
+  my $data   = shift;
+
+  return if ( !defined($currentDev) );
+
+  $currentDev->blink(1);
+  if ( !confirmWrite() ) {
+    $currentDev->blink(0);
+    return;
+  }
+  $currentDev->eraseAllEE();
+  $currentDev->blink(0);
+  return;
+}
+
+sub confirmWrite {
+  my $message = shift || "OK to Write?";
+  my $dialog = $builder->get_object("OKtoWriteDialog");
+
+  my $label = $builder->get_object("OKtoWriteLabel");
+  $label->set_text($message);
+
+  my $result = $dialog->run();
+  $dialog->hide();
+
+  return ($result);
+}
+
+sub writeConfirmedClicked {
+  my $widget = shift;
+  my $data   = shift;
+
+  $data->response(1);
+}
+
+sub writeCancelClicked {
+  my $widget = shift;
+  my $data   = shift;
+
+  $data->response(0);
+}
+
+sub dumpCloseClicked {
+  my $widget = shift;
+  my $data   = shift;
+
+  $data->response(1);
+}
+
+sub dumpButton_clicked {
+  my $widget = shift;
+  my $data   = shift;
+
+  my $textView   = $builder->get_object('eeDumpTextView');
+  my $dumpDialog = $builder->get_object('eeDumpWindow');
+
+  my $textBuffer = Gtk3::TextBuffer->new();
+  $textView->set_buffer($textBuffer);
+  my $buf = $currentDev->readEE( 0, $currentDev->eepromSize );
+  $textBuffer->set_text( bufdump($buf) );
+  $dumpDialog->run();
+  $dumpDialog->hide();
+}
+
+sub bufdump {
+  my $buf = shift;
+
+  my $ascii  = "";
+  my $j      = 0;
+  my $outbuf = "";
+
+  $outbuf = sprintf("0000 - ");
+  for ( $j = 0 ; $j < length($buf) ; $j++ ) {
+    my $val = unpack( "C", substr( $buf, $j, 1 ) );
+    if ( $j && !( $j % 16 ) ) {
+      $outbuf .= sprintf("   $ascii");
+      $ascii = "";
+      $outbuf .= sprintf( "\n%04x - ", $j );
+    }
+    if ( ( $val < 0x20 ) || ( $val > 0x7E ) ) {
+      $ascii .= '.';
+    } else {
+      $ascii .= chr($val);
+    }
+    $outbuf .= sprintf( "%02x ", $val );
+  }
+  my $adj = ( $j % 16 > 0 ) ? 16 - ( $j % 16 ) : 0;
+  $outbuf .= sprintf( '   ' x $adj . "   " . $ascii . "\n" );
+  return ($outbuf);
+}
+
+__DATA__
+
+
+
