@@ -1,6 +1,7 @@
 ## USB_Attenuator_Switch_Stacklight
 
-USB control of HP step attenuators, Coax Switches, and Stacklights
+USB control of HP step attenuators, Coax Switches, and Stacklights.
+Related project: [my USB Dual SPDT project](https://github.com/mikef5410/USB_SPDT)
 
 ![USB Microwave Attenuator](/doc/usb_atten.jpg)
 
