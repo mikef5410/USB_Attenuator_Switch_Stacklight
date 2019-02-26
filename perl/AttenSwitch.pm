@@ -361,8 +361,10 @@ You can do this when done with the device.
 
 sub disconnect {
   my $self = shift;
-  $self->dev->release_interface(0x2);
+  $self->handle->release_interface(0x2);
+  $self->handle->close();
   undef( $self->{dev} );
+  undef( $self->{handle} );
 }
 
 =over 4
