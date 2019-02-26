@@ -19,7 +19,7 @@ my $sw = shift(@ARGV);
 
 use AttenSwitch;
 
-my $dut = AttenSwitch->new( PID => 0x0001 );    #SERIAL=>"138001E0");
+my $dut = AttenSwitch->new( VIDPID => [0x4161,0x0001] );    #SERIAL=>"138001E0");
 my $result = $dut->connect();
 if ( $result == AttenSwitch::SUCCESS ) {
   print("Got device\n");

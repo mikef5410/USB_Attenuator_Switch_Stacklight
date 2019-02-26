@@ -12,11 +12,16 @@
 #
 
 package AttenSwitch;
-use Device::USB;
+
+#use Device::USB;
+use USB::LibUSB;
 use Moose;
 use Moose::Exporter;
 use MooseX::ClassAttribute;
 use namespace::autoclean;
+
+#use YAML::XS;
+use Data::Dumper qw(Dumper);
 ## no critic (BitwiseOperators)
 ## no critic (ValuesAndExpressions::ProhibitAccessOfPrivateData)
 ## no critic (Variables::RequireLexicalLoopIterators)
@@ -54,7 +59,7 @@ our $VERSION = '0.01';
 
   use AttenSwitch;
 
-  my $dut    = AttenSwitch->new(PID => 0x0003, SERIAL => "138001F0" );
+  my $dut    = AttenSwitch->new(VIDPID => [0x4161,0x0003], SERIAL => "138001F0" );
   my $result = $dut->connect();
   if ( $result == AttenSwitch::SUCCESS ) {
      print("Got device\n");
@@ -98,7 +103,7 @@ B<validVids> - An array ref of Vids this module will recognize. Defaults to [ 0x
 
 =item *
 
-B<validPids> - An array ref of Pids this module will recognize, Defaults to  [ 0x00ff, 0x0003, 0x0001, 0x0002 ]
+B<validVidPids> - An array ref of [Vid,Pid]'s this module will recognize, Defaults to  [ [0x4161,0x00ff] , [0x4161,0x0003], [0x4161,0x0001], [0x4161,0x0002], [0x4161,0x0004] ] 
 
 =back
 
@@ -108,19 +113,15 @@ B<validPids> - An array ref of Pids this module will recognize, Defaults to  [ 0
 
 =item *
 
-B<dev> - The underlying USB device (Device::USB::Device)
+B<dev> - The underlying USB device 
 
 =item *
 
-B<usb> - The underlying USB bus (Device::USB)
+B<usb> - The underlying USB bus context (USB::LibUSB)
 
 =item *
 
-B<VID> - A specific VID to which we want to connect
-
-=item *
-
-B<PID> - A specific PID to which we want to connect
+B<VIDPID> - A specific [VID,PID] to which we want to connect
 
 =item *
 
@@ -153,13 +154,17 @@ B<product> - Product string.
 =cut
 
 # Class Attributes
-class_has 'validVids' => (
+class_has 'validVidPids' => (
   is      => 'ro',
-  default => sub { [ 0x4161, ] }
-);
-class_has 'validPids' => (
-  is      => 'ro',
-  default => sub { [ 0x00ff, 0x0003, 0x0001, 0x0002, 0x0004 ] }
+  default => sub {
+    [
+      [ 0x4161, 0x00ff ],
+      [ 0x4161, 0x0003 ],
+      [ 0x4161, 0x0001 ],
+      [ 0x4161, 0x0002 ],
+      [ 0x4161, 0x0004 ]
+    ]
+  }
 );
 
 # Known devices:
@@ -178,28 +183,23 @@ class_has 'CMD_IN_EP'  => ( is => 'rw', default => 0x81 );
 # Instance Attributes
 has 'dev' => (
   is        => 'rw',
-  isa       => 'Device::USB::Device',
   predicate => 'connected',
   builder   => 'connect',
   lazy      => 1,
 );
 
+has 'handle' => ( is => 'rw', );
+
 has 'usb' => (
   is      => 'rw',
-  isa     => 'Device::USB',
-  default => sub { Device::USB->new(); }
+  isa     => 'USB::LibUSB',
+  default => sub { USB::LibUSB->init(); }
 );
 
-has 'VID' => (
+has 'VIDPID' => (
   is        => 'rw',
-  isa       => 'Int',
-  predicate => 'has_VID',
-);
-
-has 'PID' => (
-  is        => 'rw',
-  isa       => 'Int',
-  predicate => 'has_PID',
+  isa       => 'ArrayRef',
+  predicate => 'has_VIDPID',
 );
 
 has 'SERIAL' => (
@@ -264,8 +264,7 @@ be able to talk to a specific device.
 sub connect {
   my $self = shift;
 
-  my @vids = $self->has_VID() ? $self->VID() : @{ AttenSwitch->validVids() };
-  my @pids = $self->has_PID() ? $self->PID() : @{ AttenSwitch->validPids() };
+  my @ids = $self->has_VIDPID() ? $self->VIDPID() : @{ AttenSwitch->validVidPids() };
   my $vid;
   my $pid;
   my $dev;
@@ -274,58 +273,72 @@ sub connect {
     $dev = $self->device;
     goto FOUND;
   }
-  foreach $vid (@vids) {
-    foreach $pid (@pids) {
-      if ( $self->has_SERIAL ) {
-        $dev = $self->usb->find_device_if(
-          sub {
-            return ( ( $_->idVendor == $vid ) && ( $_->idProduct == $pid ) && ( $_->serial_number eq $self->SERIAL ) );
-          }
-        );
-      } else {
-        $dev = $self->usb->find_device( $vid, $pid );
-      }
-      if ( defined $dev ) {
-        goto FOUND;
-      }
-    }
+
+  my $handle;
+  if ( $self->has_SERIAL ) {
+    $handle = $self->usb->open_device_with_vid_pid_serial(
+      $self->VIDPID->[0],
+      $self->VIDPID->[1],
+      $self->SERIAL
+    );
+  } elsif ( $self->has_VIDPID ) {
+    $handle = $self->usb->open_device_with_vid_pid( $self->VIDPID->[0], $self->VIDPID->[1] );
   }
 
-  if ( !defined $dev ) {
+  if ( !defined($handle) ) {
+    foreach my $id (@ids) {
+      $handle = $self->usb->open_device_with_vid_pid( $self->VIDPID->[0], $self->VIDPID->[1] );
+      last if ( defined($handle) );
+    }    #next ID
+  }
+
+  if ( !defined $handle ) {
     print "ERROR: could not find any AttenSwitch devices \n";
     return AttenSwitch->FAIL;
   }
 
 FOUND:
+  $dev = $handle->get_device();
+  $self->handle($handle);
   $self->dev($dev);
-  $self->VID( $dev->idVendor() );
-  $self->PID( $dev->idProduct() );
-  $self->SERIAL( $dev->serial_number() );
-  $self->manufacturer( $dev->manufacturer() );
-  $self->product( $dev->product() );
 
-  $dev->open();
+  my $desc = $dev->get_device_descriptor();
+  $self->VIDPID( [ $desc->{idVendor}, $desc->{idProduct} ] );
+  $self->SERIAL( $handle->get_string_descriptor_ascii( $desc->{iSerialNumber}, 64 ) );
+  $self->manufacturer( $handle->get_string_descriptor_ascii( $desc->{iManufacturer}, 256 ) );
+  $self->product( $handle->get_string_descriptor_ascii( $desc->{iProduct}, 256 ) );
+
+  $self->handle->set_auto_detach_kernel_driver(1);
+
   if ( $self->verbose ) {
-    printf( "Manufacturer   %s, %s \n",                $dev->manufacturer(), $dev->product() );
-    printf( "Device         VID: %04X   PID: %04X \n", $self->VID,           $self->PID );
+    printf( "Manufacturer   %s, %s \n",                $self->manufacturer(), $self->product() );
+    printf( "Device         VID: %04X   PID: %04X \n", $self->VIDPID->[0],    $self->VIDPID->[1] );
   }
-  my $cfg   = $dev->config()->[0];
-  my $numIf = $cfg->bNumInterfaces();
-  my $inter = $cfg->interfaces()->[0]->[0];
-  for ( my $if = 0 ; $if < $numIf ; $if++ ) {
-    $inter = $cfg->interfaces()->[$if]->[0];
-    my $numEp = $inter->bNumEndpoints();
-    if ( $self->verbose() ) {
-      printf( "Interface      0x%x,  index %d \n", $inter, $if );
+
+  my $cfg   = $dev->get_active_config_descriptor();
+  my $numIf = $cfg->{bNumInterfaces};
+  my $inter = $cfg->{interface}->[0];
+  my $numEp = 0;
+  if ( $self->verbose() ) {
+    for ( my $if = 0 ; $if < $numIf ; $if++ ) {
+      $inter = $cfg->{interface}->[$if];
+      $numEp = $inter->{bNumEndpoints};
+      printf(
+        "Interface class 0x%x,  index %d, %d endpoints.\n",
+        $inter->{bInterfaceClass},
+        $if, $numEp
+      );
       printf("Endpoints      ");
-    }
-    for ( my $epnum = 0 ; $epnum < $numEp ; $epnum++ ) {
-      my $ep = $inter->endpoints()->[$epnum];
-      printf( "0x%02x   ", $ep->bEndpointAddress() ) if ( $self->verbose() );
-    }
-    printf("\n") if ( $self->verbose() );
+
+      for ( my $epnum = 0 ; $epnum < $numEp ; $epnum++ ) {
+        my $ep = $inter->{endpoint}->[$epnum];
+        printf( "0x%02x   ", $ep->{bEndpointAddress} );
+      }    #Loop over endpoints
+      printf("\n");
+    }    #Loop over interfaces
   }
-  my $claim = $dev->claim_interface(0x2);    #Interface #2 is my command I/O interface
+
+  my $claim = $self->handle->claim_interface(0x2);    #Interface #2 is my command I/O interface
   printf("Claim returns  $claim \n") if ( $self->verbose() );
   $self->dev($dev);
 
@@ -377,16 +390,17 @@ sub send_packet {
       my $bytes = $packet->packet;
       my $notSent;
       do {
-        my $ret = $self->dev->bulk_write( AttenSwitch->CMD_OUT_EP, $bytes, length($bytes), $self->timeout_ms );
+        my $ret =
+          $self->handle->bulk_transfer_write( AttenSwitch->CMD_OUT_EP, $bytes, $self->timeout_ms );
         $txTot += $ret;
         $notSent = length( $packet->packet ) - $txTot;
-        $bytes = substr( $packet->packet, $txTot );
+        $bytes   = substr( $packet->packet, $txTot );
       } while ( $notSent > 0 );
 
       #Now, get the response packet
       my $rxbuf = "";
       my $ret;
-      $ret = $self->dev->bulk_read( AttenSwitch->CMD_IN_EP, $rxbuf, 1024, $self->timeout_ms );
+      $rxbuf = $self->handle->bulk_transfer_read( AttenSwitch->CMD_IN_EP, 1024, $self->timeout_ms );
       $rxPacket->from_bytes($rxbuf);
       if ( $rxPacket->command->is_ack ) {
         return ( AttenSwitch->SUCCESS, $rxPacket );
@@ -618,7 +632,7 @@ $on should be 1 for blink on, 0 for blink off
 
 sub blink {
   my $self = shift;
-  my $on = shift || 0;
+  my $on   = shift || 0;
 
   my $outPkt = AttenSwitch::Packet->new(
     command => AttenSwitch::COMMAND->BLINK,

@@ -42,7 +42,7 @@ if ( Proc::PID::File->running(dir=>dirname($pidfile)) ) {
 
 Proc::Daemon::Init({setuid=>65534,setgid=>65534,pid_file=>$pidfile});
 
-my $stacklight = AttenSwitch->new(PID=>0x0001, SERIAL=>"13700250");
+my $stacklight = AttenSwitch->new(VIDPID=>[0x4161,0x0001], SERIAL=>"13700250");
 my $result = $stacklight->connect();
 
 my $currentColor = "g";
