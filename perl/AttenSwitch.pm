@@ -317,11 +317,11 @@ FOUND:
 
   my $cfg   = $dev->get_active_config_descriptor();
   my $numIf = $cfg->{bNumInterfaces};
-  my $inter = $cfg->{interface}->[0];
+  my $inter = $cfg->{interface}->[0]->[0];
   my $numEp = 0;
   if ( $self->verbose() ) {
     for ( my $if = 0 ; $if < $numIf ; $if++ ) {
-      $inter = $cfg->{interface}->[$if];
+      $inter = $cfg->{interface}->[$if]->[0];
       $numEp = $inter->{bNumEndpoints};
       printf(
         "Interface class 0x%x,  index %d, %d endpoints.\n",
