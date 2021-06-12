@@ -1,6 +1,5 @@
 #!/usr/bin/perl
 #
-
 use strict;
 use warnings;
 use feature qw(switch);
@@ -8,32 +7,25 @@ no warnings 'experimental';
 
 #Where to find our library and auxiliary code.
 use FindBin qw($Bin);
-use lib $ENV{ATTENSW} || "/projects/usbAtten_controller/perl";
-
 use lib "$Bin/..";
 use lib "$Bin";
-
 my $sw = shift(@ARGV);
-
 use AttenSwitch;
-
-my $dut    = AttenSwitch->new();
+my $dut    = AttenSwitch->new(VIDPID=>[0x4161,0x00ff]);
 my $result = $dut->connect();
+
 if ( $result == AttenSwitch::SUCCESS ) {
   print("Got device\n");
 }
-
 my $size = 512;
-my $buf = $dut->readEE( 0, 512 );
+my $buf  = $dut->readEE( 0, 512 );
 bufdump($buf);
 exit;
 
 sub bufdump {
-  my $buf = shift;
-
+  my $buf   = shift;
   my $ascii = "";
   my $j     = 0;
-
   print("0000 - ");
   for ( $j = 0 ; $j < length($buf) ; $j++ ) {
     my $val = unpack( "C", substr( $buf, $j, 1 ) );

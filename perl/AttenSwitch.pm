@@ -34,6 +34,7 @@ AttenSwitch - Communicate with USB Attenuator/Switch/Stacklight driver via packe
 VERSION 0.01
 
 =cut
+
 our $VERSION = '0.01';
 
 =head1 SYNOPSIS
@@ -96,7 +97,7 @@ Sources and HW design files live here: https://github.com/mikef5410/USB_Attenuat
 
 =item *
 
-B<validVids> - An array ref of Vids this module will recognize. Defaults to [ 0x4161, ]
+B<validVidPids> - An array ref of Vids this module will recognize. Defaults to [ 0x4161, ]
 
 =item *
 
@@ -253,11 +254,12 @@ sub connect {
   my $vid;
   my $pid;
   my $dev;
+  my $handle;
+
   if ( defined( $self->device ) ) {
     $dev = $self->device;
     goto FOUND;
   }
-  my $handle;
   if ( $self->has_SERIAL ) {
     $handle = $self->usb->open_device_with_vid_pid_serial( $self->VIDPID->[0], $self->VIDPID->[1], $self->SERIAL );
   } elsif ( $self->has_VIDPID ) {
@@ -273,8 +275,9 @@ sub connect {
     print "ERROR: could not find any AttenSwitch devices \n";
     return AttenSwitch->FAIL;
   }
-FOUND:
   $dev = $handle->get_device();
+ FOUND:
+  $handle=$dev->open();
   $self->handle($handle);
   $self->dev($dev);
   my $desc = $dev->get_device_descriptor();
@@ -659,6 +662,7 @@ Magic is one byte, 0xAA to indicate EEprom is valid.
 =back
 
 =cut
+
 sub eeMagic {
   my $self = shift;
   my $val  = shift;         #number
@@ -685,7 +689,7 @@ VID will default to our default VID if undef. VID and PID are 16 bit numbers.
 
 sub eeVidPid {
   my $self = shift;
-  my $vid  = shift || AttenSwitch->validVids()->[0];
+  my $vid  = shift || AttenSwitch->validVidPids()->[0]->[0];
   my $pid  = shift;
   if ( defined($pid) ) {    # Writing
     $vid &= 0xffff;

@@ -1,6 +1,5 @@
 #!/usr/bin/perl
 #
-
 use strict;
 use warnings;
 use feature qw(switch);
@@ -9,24 +8,19 @@ no warnings 'experimental';
 #Where to find our library and auxiliary code.
 use FindBin qw($Bin);
 use lib $ENV{ATTENSW} || "/projects/usbAtten_controller/perl";
-
 use lib "$Bin/..";
 use lib "$Bin";
-
 my $color   = uc( shift(@ARGV) );
 my $onTime  = shift(@ARGV) || 0;
 my $offTime = shift(@ARGV) || 0;
 my $count   = shift(@ARGV) || 0;
-
 use AttenSwitch;
-
-my $dut = AttenSwitch->new( PID => 0x0001, SERIAL => "13700250" );
+my $dut    = AttenSwitch->new( PID => 0x0001, SERIAL => "13700250" );
 my $result = $dut->connect();
 
 #if ( $result == AttenSwitch::SUCCESS ) {
 #print("Got device\n");
 #}
-
 $dut->stacklightNotify( $color, $onTime, $offTime, $count );
 printf("ok\n");
 exit;

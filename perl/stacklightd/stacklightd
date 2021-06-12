@@ -1,9 +1,6 @@
 #!/usr/bin/perl
 #
-
 #Watch /tmp/stacklight for blink instructions
-
-
 #use strict;
 use Linux::Inotify2;
 use File::Basename qw(dirname basename);
@@ -19,129 +16,110 @@ use Time::HiRes;
 use FindBin qw($Bin);
 use lib $ENV{BCOM_PERL} || "/projects/Bcom-perl";
 use lib $ENV{PERL_GPIB} || "/projects/gpib";
-
 use lib "$Bin/..";
 use lib "$Bin";
 use AttenSwitch;
-
 my $pidfile = "/var/run/stacklightd/stacklightd.pid";
 my $semfile = "/tmp/stacklight";
 
-
 #Daemonize, make sure we've got a writable directory for the pid file....
-if ( ! -d dirname($pidfile) ) {
-  make_path(dirname($pidfile));
+if ( !-d dirname($pidfile) ) {
+  make_path( dirname($pidfile) );
 }
-chown(65534,65534,dirname($pidfile));
-chmod(0777,dirname($pidfile));
+chown( 65534, 65534, dirname($pidfile) );
+chmod( 0777, dirname($pidfile) );
 
 # If already running, then exit (/var/run/basename($0).pid)
-if ( Proc::PID::File->running(dir=>dirname($pidfile)) ) {
+if ( Proc::PID::File->running( dir => dirname($pidfile) ) ) {
   exit(0);
 }
-
-Proc::Daemon::Init({setuid=>65534,setgid=>65534,pid_file=>$pidfile});
-
-my $stacklight = AttenSwitch->new(VIDPID=>[0x4161,0x0001], SERIAL=>"13700250");
-my $result = $stacklight->connect();
-
+Proc::Daemon::Init( { setuid => 65534, setgid => 65534, pid_file => $pidfile } );
+my $stacklight   = AttenSwitch->new( VIDPID => [ 0x4161, 0x0001 ], SERIAL => "13700250" );
+my $result       = $stacklight->connect();
 my $currentColor = "g";
-
-if ($result != AttenSwitch::SUCCESS) {
+if ( $result != AttenSwitch::SUCCESS ) {
   die("No stacklight to control!");
 }
 chase_down();
-
-
 $stacklight->disconnect();
 openlog( "stacklightd", "ndelay,pid", "local0" );
-
 my $MONdir = {
-  path => dirname($semfile),
-  events => { (IN_MOVED_TO|IN_CLOSE_WRITE) => 'file_created',
-              (IN_MOVED_FROM|IN_DELETE) => 'file_deleted',
-            }
- };
-
-POEx::Inotify->spawn( );
-
+  path   => dirname($semfile),
+  events => {
+    ( IN_MOVED_TO | IN_CLOSE_WRITE ) => 'file_created',
+    ( IN_MOVED_FROM | IN_DELETE )    => 'file_deleted',
+  }
+};
+POEx::Inotify->spawn();
 POE::Session->create(
-  package_states => [ 
-    'main' => [ qw(_start file_created file_deleted) ],
-   ],
- );
-
+  package_states => [
+    'main' => [qw(_start file_created file_deleted)],
+  ],
+);
 $poe_kernel->run();
 exit 0;
 
 sub _start {
-  my( $kernel, $heap ) = @_[ KERNEL, HEAP ];
+  my ( $kernel, $heap ) = @_[ KERNEL, HEAP ];
   syslog( LOG_INFO, "program starting." );
-
-  unlink($semfile); #clear previous state
+  unlink($semfile);    #clear previous state
   $kernel->call( inotify => 'monitor', $MONdir );
-
   return;
 }
 
 sub file_created {
-  my( $kernel, $e, $args ) = @_[ KERNEL, ARG0, ARG1];
-
-  if ($e->fullname eq $semfile) {
-    syslog( LOG_INFO, "blink request");
-    open(my $SEM, $semfile);
+  my ( $kernel, $e, $args ) = @_[ KERNEL, ARG0, ARG1 ];
+  if ( $e->fullname eq $semfile ) {
+    syslog( LOG_INFO, "blink request" );
+    open( my $SEM, $semfile );
     my $in = <$SEM>;
     close($SEM);
-    my($color,$timeOn,$timeOff,$count)=split(" ",$in);
-    $currentColor=$color;
+    my ( $color, $timeOn, $timeOff, $count ) = split( " ", $in );
+    $currentColor = $color;
     my $r = $stacklight->connect();
-    if ($r != AttenSwitch::SUCCESS) {
-      syslog(LOG_INFO, "stacklight open failed");
+    if ( $r != AttenSwitch::SUCCESS ) {
+      syslog( LOG_INFO, "stacklight open failed" );
       return;
     }
-    $stacklight->stacklightNotify($color,$timeOn,$timeOff,$count);
+    $stacklight->stacklightNotify( $color, $timeOn, $timeOff, $count );
     $stacklight->disconnect();
   }
   return;
 }
 
 sub file_deleted {
-  my( $kernel, $e, $args ) = @_[ KERNEL, ARG0, ARG1];
-
-  if ($e->fullname eq $semfile) {
-    syslog( LOG_INFO, "extinguish request");
+  my ( $kernel, $e, $args ) = @_[ KERNEL, ARG0, ARG1 ];
+  if ( $e->fullname eq $semfile ) {
+    syslog( LOG_INFO, "extinguish request" );
     my $r = $stacklight->connect();
-    if ($r != AttenSwitch::SUCCESS) {
-      syslog(LOG_INFO, "stacklight open failed");
+    if ( $r != AttenSwitch::SUCCESS ) {
+      syslog( LOG_INFO, "stacklight open failed" );
       return;
     }
-    $stacklight->stacklightNotify($currentColor,1,1,1);
+    $stacklight->stacklightNotify( $currentColor, 1, 1, 1 );
     $stacklight->disconnect();
   }
-
   return;
 }
 
 sub chase_down {
   my $time1 = 0.8;
   my $time2 = 0.8;
-
-  $stacklight->stacklightNotify("r",0,0,0);
+  $stacklight->stacklightNotify( "r", 0, 0, 0 );
   sleep($time1);
-  $stacklight->stacklightNotify("ry",0,0,0);
+  $stacklight->stacklightNotify( "ry", 0, 0, 0 );
   sleep($time2);
-  $stacklight->stacklightNotify("r",1,1,1);
-  $stacklight->stacklightNotify("y",0,0,0);
+  $stacklight->stacklightNotify( "r", 1, 1, 1 );
+  $stacklight->stacklightNotify( "y", 0, 0, 0 );
   sleep($time1);
-  $stacklight->stacklightNotify("yg",0,0,0);
+  $stacklight->stacklightNotify( "yg", 0, 0, 0 );
   sleep($time2);
-  $stacklight->stacklightNotify("y",1,1,1);
-  $stacklight->stacklightNotify("g",0,0,0);
+  $stacklight->stacklightNotify( "y", 1, 1, 1 );
+  $stacklight->stacklightNotify( "g", 0, 0, 0 );
   sleep($time1);
-  $stacklight->stacklightNotify("g",1,1,1);
+  $stacklight->stacklightNotify( "g", 1, 1, 1 );
   return;
 }
-
 __END__
 
 =head1 NAME

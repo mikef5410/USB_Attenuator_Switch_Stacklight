@@ -1,35 +1,28 @@
 #!/usr/bin/perl
 #
-
 use strict;
 use warnings;
 
 #Where to find our library and auxiliary code.
 use FindBin qw($Bin);
 use lib $ENV{ATTENSW} || "/projects/usbAtten_controller/perl";
-
 use lib "$Bin/..";
 use lib "$Bin";
-
 my $sw      = shift(@ARGV);
 my $setting = uc( shift(@ARGV) );
-
 use AttenSwitch;
-
-my $dut = AttenSwitch->new( PID => 0x0002 );
+my $dut    = AttenSwitch->new( PID => 0x0002 );
 my $result = $dut->connect();
+
 if ( $result == AttenSwitch::SUCCESS ) {
   print("Got device\n");
 }
-
 my $swSel;
 my $s;
-
 SW1: {
   if ( $sw eq "1" ) { $swSel = AttenSwitch::SPDTSEL->SW1; last SW1; }
   if ( $sw eq "2" ) { $swSel = AttenSwitch::SPDTSEL->SW2; last SW1; }
 }
-
 SW: {
   if ( $setting eq "1" || $setting eq "A" ) {
     $s = AttenSwitch::SPDTSETTING->J1SEL;
@@ -40,7 +33,6 @@ SW: {
     last SW;
   }
 }
-
 $dut->spdt( $swSel, $s );
 printf("ok\n");
 exit;
