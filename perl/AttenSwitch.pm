@@ -485,7 +485,8 @@ sub stacklightNotify {
 
 =item B<< $return = $attenswitch->getAmbientTHP() >> 
 
-Reads ambient air temp, pressure and humidity. Returns [TempC,RH%,PressPa]
+Reads ambient air temp, pressure and humidity. Returns [TempC,RH%,Pressure_mb]
+
 
 =back
 
@@ -495,6 +496,9 @@ sub getAmbientTHP {
   my $self   = shift;
   my $outPkt = AttenSwitch::Packet->new( command => AttenSwitch::COMMAND->AMBIENTTHP, payload => "" );
   my ( $res, $rxPacket ) = $self->send_packet($outPkt);
+  my $pl = $rxPacket->payload;
+  my ($t,$h,$p)=unpack("lll",$pl);
+  return([$t/100.0,$h/10.0,$p/100.0]);
 }
 
 =over 4
@@ -513,6 +517,10 @@ sub getAirlinePT {
   my $self   = shift;
   my $outPkt = AttenSwitch::Packet->new( command => AttenSwitch::COMMAND->AIRPRESSTEMP, payload => "" );
   my ( $res, $rxPacket ) = $self->send_packet($outPkt);
+  #$rxPacket->dump;
+  my $pl=$rxPacket->payload;
+  my ($t,$p)=unpack("ll",$pl);
+  return([$p/100.0,$t/100.0]);
 }
 
 =over 4
@@ -998,7 +1006,7 @@ __PACKAGE__->meta->make_immutable;
 package AttenSwitch::COMMAND;
 use Class::Enum qw(ACK NAK RESET ID ECHO SSN DIAG SP8T
   AUXOUT AUXIN ATT LIGHT NOTIFY READEE
-  WRITEEE SPDT ERASEALL BLINK CMD_AMBIENTTHP CMD_AIRPRESSTEMP
+  WRITEEE SPDT ERASEALL BLINK AMBIENTTHP AIRPRESSTEMP
 );
 1;
 
