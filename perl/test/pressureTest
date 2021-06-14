@@ -21,9 +21,9 @@ while(1) {
   print "Airline temp: ",$tp->[1]," ℃, pressure: ",$tp->[0], " psi\n";
   
   my $thp=$dut->getAmbientTHP();
-  print "Ambient temp: ",$thp->[0]," ℃, Humidity: ",$thp->[1],"%, Pressure: ",$thp->[2],"mb\n";
-  
-  sleep(3);
+  my $dp=$dut->dewpoint($thp->[0],$thp->[1]);
+  print "Ambient temp: ",$thp->[0]," ℃, Humidity: ",$thp->[1],"%, Pressure: ",$thp->[2],"mb"," Dewpoint: ",$dp," ℃\n";
+  sleep(10);
 }
 printf("ok\n");
 

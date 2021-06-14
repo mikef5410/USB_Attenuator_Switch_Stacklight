@@ -483,6 +483,36 @@ sub stacklightNotify {
 
 =over 4
 
+=item B<< $return = $attenswitch->dewpoint($temp,$rh) >> 
+
+Return dewpoint from a temperature and rh%
+
+=back
+
+=cut
+
+sub log10 {
+  my $x=shift;
+  return(log($x)/log(10.0));
+}
+
+sub dewpoint {
+  my $self=shift;
+  my $temp=shift;
+  my $rh=shift;
+
+  my $HSENSOR_CONSTANT_A=8.1332;
+  my $HSENSOR_CONSTANT_B=1762.39;
+  my $HSENSOR_CONSTANT_C=235.66;
+
+  my $partialPressure = 10.0 ** ($HSENSOR_CONSTANT_A - $HSENSOR_CONSTANT_B / ($temp + $HSENSOR_CONSTANT_C));
+  my $dp = -$HSENSOR_CONSTANT_B / (log10($rh * $partialPressure / 100) - $HSENSOR_CONSTANT_A) - $HSENSOR_CONSTANT_C;
+  $dp=int((100.0*$dp)+0.5)/100.0;
+  return($dp);
+}
+
+=over 4
+
 =item B<< $return = $attenswitch->getAmbientTHP() >> 
 
 Reads ambient air temp, pressure and humidity. Returns [TempC,RH%,Pressure_mb]
