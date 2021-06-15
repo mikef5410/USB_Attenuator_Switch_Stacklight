@@ -213,7 +213,7 @@ has 'verbose' => (
 has 'timeout_ms' => (
   is      => 'rw',
   isa     => 'Int',
-  default => 500
+  default => 5000
 );
 has 'manufacturer' => (
   is      => 'rw',
@@ -276,8 +276,8 @@ sub connect {
     return AttenSwitch->FAIL;
   }
   $dev = $handle->get_device();
- FOUND:
-  $handle=$dev->open();
+FOUND:
+  $handle = $dev->open();
   $self->handle($handle);
   $self->dev($dev);
   my $desc = $dev->get_device_descriptor();
@@ -492,23 +492,27 @@ Return dewpoint from a temperature and rh%
 =cut
 
 sub log10 {
-  my $x=shift;
-  return(log($x)/log(10.0));
+  my $x = shift;
+  return ( log($x) / log(10.0) );
 }
 
 sub dewpoint {
-  my $self=shift;
-  my $temp=shift;
-  my $rh=shift;
+  my $self = shift;
+  my $temp = shift;
+  my $rh   = shift;
 
-  my $HSENSOR_CONSTANT_A=8.1332;
-  my $HSENSOR_CONSTANT_B=1762.39;
-  my $HSENSOR_CONSTANT_C=235.66;
+  my $HSENSOR_CONSTANT_A = 8.1332;
+  my $HSENSOR_CONSTANT_B = 1762.39;
+  my $HSENSOR_CONSTANT_C = 235.66;
 
-  my $partialPressure = 10.0 ** ($HSENSOR_CONSTANT_A - $HSENSOR_CONSTANT_B / ($temp + $HSENSOR_CONSTANT_C));
-  my $dp = -$HSENSOR_CONSTANT_B / (log10($rh * $partialPressure / 100) - $HSENSOR_CONSTANT_A) - $HSENSOR_CONSTANT_C;
-  $dp=int((100.0*$dp)+0.5)/100.0;
-  return($dp);
+  if ($rh > 0 ) {
+    my $partialPressure = 10.0**( $HSENSOR_CONSTANT_A - $HSENSOR_CONSTANT_B / ( $temp + $HSENSOR_CONSTANT_C ) );
+    my $dp = -$HSENSOR_CONSTANT_B / ( log10( $rh * $partialPressure / 100 ) - $HSENSOR_CONSTANT_A ) - $HSENSOR_CONSTANT_C;
+    $dp = int( ( 100.0 * $dp ) + 0.5 ) / 100.0;
+    return ($dp);
+  } else {
+    return(undef);
+  }
 }
 
 =over 4
@@ -527,8 +531,8 @@ sub getAmbientTHP {
   my $outPkt = AttenSwitch::Packet->new( command => AttenSwitch::COMMAND->AMBIENTTHP, payload => "" );
   my ( $res, $rxPacket ) = $self->send_packet($outPkt);
   my $pl = $rxPacket->payload;
-  my ($t,$h,$p)=unpack("lll",$pl);
-  return([$t/100.0,$h/10.0,$p/100.0]);
+  my ( $t, $h, $p ) = unpack( "lll", $pl );
+  return ( [ $t / 100.0, $h / 10.0, $p / 100.0 ] );
 }
 
 =over 4
@@ -547,10 +551,11 @@ sub getAirlinePT {
   my $self   = shift;
   my $outPkt = AttenSwitch::Packet->new( command => AttenSwitch::COMMAND->AIRPRESSTEMP, payload => "" );
   my ( $res, $rxPacket ) = $self->send_packet($outPkt);
+
   #$rxPacket->dump;
-  my $pl=$rxPacket->payload;
-  my ($t,$p)=unpack("ll",$pl);
-  return([$p/100.0,$t/100.0]);
+  my $pl = $rxPacket->payload;
+  my ( $t, $p ) = unpack( "ll", $pl );
+  return ( [ $p / 100.0, $t / 100.0 ] );
 }
 
 =over 4
