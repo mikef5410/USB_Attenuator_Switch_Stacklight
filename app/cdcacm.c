@@ -442,7 +442,9 @@ portTASK_FUNCTION(vUSBCDCACMTask, pvParameters)
   nvic_enable_irq(NVIC_OTG_FS_IRQ);
   while (1) {
     if (pdPASS == xSemaphoreTake(usbInterrupted,portMAX_DELAY)) {
+      taskENTER_CRITICAL();
       usbd_poll(usbd_dev);
+      taskEXIT_CRITICAL();
       nvic_enable_irq(NVIC_OTG_FS_IRQ);
     }
   }
