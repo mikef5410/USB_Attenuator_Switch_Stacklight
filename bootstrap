@@ -6,16 +6,19 @@ git submodule update
 LIBOPENCM3_VER=7b29caed1a726b5cef4c269b6a6ef7a1f1dd105c
 FreeRTOS_VER=v8.2.1
 
-(cd external/libopencm3; git co $LIBOPENCM3_VER; git clean -dfx)
-(cd external/FreeRTOS; git co $FreeRTOS_VER; git clean -dfx)
+(cd external/libopencm3; git reset --hard; git co $LIBOPENCM3_VER; git clean -dfx; mv Makefile Makefile.orig; ln -s ../../app/libopencm3_top_makefile Makefile )
+
+(cd external/FreeRTOS; git reset --hard; git co $FreeRTOS_VER; git clean -dfx)
 
 freertos=external/FreeRTOS/FreeRTOS
+rm -rf FreeRTOS
 mkdir -p FreeRTOS/Source/portable/GCC
 cp ${freertos}/Source/* FreeRTOS/Source
-cp -R ${freertos}/Source/include FreeRTOS/Source
-cp -R ${freertos}/Source/portable/GCC/ARM_CM* FreeRTOS/Source/portable/GCC
-cp -R ${freertos}/Source/portable/MemMang FreeRTOS/Source/portable
+cp -Rf ${freertos}/Source/include FreeRTOS/Source
+cp -Rf ${freertos}/Source/portable/GCC/ARM_CM* FreeRTOS/Source/portable/GCC
+cp -Rf ${freertos}/Source/portable/MemMang FreeRTOS/Source/portable
 
 cd app
+rm -f usb_fx07_common.h usb_private.h 
 ln -s ../external/libopencm3/lib/usb/usb_fx07_common.h .
 ln -s ../external/libopencm3/lib/usb/usb_private.h .
