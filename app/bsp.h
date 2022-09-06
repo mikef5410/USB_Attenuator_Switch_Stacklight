@@ -33,7 +33,7 @@
 // ----------------------------------------------------------------
 
 #define NUM_TIMERS 2
-xTimerHandle xTimers[ NUM_TIMERS ];
+BSPGLOBAL xTimerHandle xTimers[ NUM_TIMERS ];
 
 // ----------------------------------------------------------------
 // PUBLIC API definition
