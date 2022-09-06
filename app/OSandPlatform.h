@@ -104,7 +104,7 @@ typedef int32_t ChipDriverStatus_t;
 
 // HACK HACK HACK
 // TEMPORARY HACK TO MAKE PRINTF WORK WITHIN FREERTOS TASKS
-    char pbuf[1024];
+  //char pbuf[1024];
     extern int myprintf(const char *format, ...);
     extern int mysprintf(char *out, const char *format, ...);
     extern int mysnprintf(char *buf, unsigned int count,
