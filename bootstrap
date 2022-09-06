@@ -3,8 +3,11 @@
 git submodule init
 git submodule update
 
+CEXCEPTION_VER=3667ee2d4428c7ca602f2a1ab925ab1a3c2c0a09
 LIBOPENCM3_VER=7b29caed1a726b5cef4c269b6a6ef7a1f1dd105c
 FreeRTOS_VER=v8.2.1
+
+(cd external/CException; git reset --hard; git co $CEXCEPTION_VER; git clean -dfx)
 
 (cd external/libopencm3; git reset --hard; git co $LIBOPENCM3_VER; git clean -dfx; mv Makefile Makefile.orig; ln -s ../../app/libopencm3_top_makefile Makefile )
 
