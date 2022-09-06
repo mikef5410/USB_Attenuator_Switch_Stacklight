@@ -161,7 +161,8 @@ class_has 'validVidPids' => (
       [ 0x4161, 0x0001 ],
       [ 0x4161, 0x0002 ],
       [ 0x4161, 0x0004 ],
-      [ 0x4161, 0x0005 ],
+     [ 0x4161, 0x0005 ],
+     [ 0x4161, 0x0006 ],
     ]
   }
 );
@@ -1074,5 +1075,6 @@ use Class::Enum (
   PROD_ATTEN70      => { ordinal => 3 },
   PROD_DUALSPDT     => { ordinal => 4 },
   PROD_PRESSURESENS => { ordinal => 5 },
+  PROD_KS8769M => { ordinal => 6 },
 );
 1;
