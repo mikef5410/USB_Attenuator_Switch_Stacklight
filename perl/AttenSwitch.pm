@@ -406,6 +406,31 @@ sub sp8t {
 
 =over 4
 
+=item B<< $err = $attenswitch->sp6t($select) >> 
+
+Set the Keysight 8769M SP6T switch. $select is an AttenSwitch::SP6TSETTING, a Class::Enum of: qw(J1 J2 J3 J4 J5 J6 )
+
+$err will be either AttenSwitch->SUCCESS or AttenSwitch->FAIL.
+
+=back
+
+
+=cut
+
+sub sp8t {
+  my $self   = shift;
+  my $sel    = shift;                      #AttenSwitch::SP8TSETTING
+  my $outPkt = AttenSwitch::Packet->new(
+    command => AttenSwitch::COMMAND->KS8769M,
+    payload => pack( "C", $sel->ordinal )
+  );
+  my ( $res, $rxPacket ) = $self->send_packet($outPkt);
+  return ($res);
+}
+
+
+=over 4
+
 =item B<< $err = $attenswitch->spdt($switch, $select) >> 
  
 Set one of the two available SPDTs. $switch is a AttenSwitch::SPDTSEL, a Class::Enum of: qw(SW1 SW2) and $select is a AttenSwitch::SPDTSETTING, a Class::Enum of qw(J1SEL J2SEL).
@@ -1043,6 +1068,7 @@ package AttenSwitch::COMMAND;
 use Class::Enum qw(ACK NAK RESET ID ECHO SSN DIAG SP8T
   AUXOUT AUXIN ATT LIGHT NOTIFY READEE
   WRITEEE SPDT ERASEALL BLINK AMBIENTTHP AIRPRESSTEMP
+  KS8769M
 );
 1;
 

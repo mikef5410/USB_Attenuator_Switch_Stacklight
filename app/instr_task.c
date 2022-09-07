@@ -281,6 +281,11 @@ __attribute__((noreturn)) portTASK_FUNCTION(vInstrumentTask, pvParameters) {
         id_blink(instrInpktBuf->payload.pl_uchar.a_uchar);
         break;
 
+      case CMD_KS8769M: //Payload is one byte {J1|J2|J3|J4|J5|J6}
+        muxSel = (sp8tSel_t)instrInpktBuf->payload.pl_uchar.a_uchar;
+        set8769(muxSel);
+        break;
+
       default:
         dprintf("ERROR: unrecognized or NYI command: %u\r\n",instrInpktBuf->cmd);
         instrOutpktBuf->cmd = CMD_NAK;

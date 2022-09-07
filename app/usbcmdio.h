@@ -39,8 +39,11 @@ extern "C" {
     CMD_READEE,     // 13 0x0D  read one byte of EEprom, 2-byte address (LE)
     CMD_WRITEEE,    // 14 0x0E  write one byte of EEprom, 2-byte address (LE), 1 byte data
     CMD_SPDT,       // 15 0x0F  set one of two spdts, 2 bytes { SW1 | SW2, J1|J2 }
-    CMD_ERASEALL,    // 16 0x10  erase al of the EEProm
+    CMD_ERASEALL,   // 16 0x10  erase al of the EEProm
     CMD_BLINK,      //  17 0x11  blink LED on board to identify (1 byte, 0 for off, nonzero on)
+    CMD_AMBIENTTHP,  //  18 0x12
+    CMD_AIRPRESSTEMP, // 19 0x13
+    CMD_KS8769M,    //  20 0x14  set Keysight 8769M SP6T
   } pkttype_t;
 
   typedef enum {
@@ -60,6 +63,8 @@ extern "C" {
     PROD_MAPLEOLT = 2,
     PROD_ATTEN70 = 3,
     PROD_SPDT = 4,
+    PROD_SP8T = 5,
+    PROD_KS8769M = 6
   } product_t;
   
   typedef enum {

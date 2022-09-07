@@ -62,6 +62,7 @@ extern "C" {
 #include "spdtAux.h"
 #include "sp8t.h"
 #include "stacklight.h"
+#include "ks8769m.h"
 #include "instr_task.h"  
   
 #define TESTEEPROM 1

@@ -126,6 +126,10 @@ void setupGPIOs(void)
   gpio_clear(GPIOC, GPIO0|GPIO1|
                   GPIO2|GPIO3|GPIO4|GPIO5|GPIO6|GPIO7|GPIO8|
                   GPIO9|GPIO10|GPIO11|GPIO12);
+
+  gpio_mode_setup(GPIOA, GPIO_MODE_OUTPUT, GPIO_PUPD_NONE, GPIO4|GPIO5);
+  gpio_set_output_options(GPIOA, GPIO_OTYPE_PP, GPIO_OSPEED_2MHZ, GPIO4|GPIO5);
+  gpio_clear(GPIOA, GPIO4|GPIO5 );
   
   //HV Enable
   gpio_mode_setup(GPIOD, GPIO_MODE_OUTPUT, GPIO_PUPD_NONE, GPIO2);

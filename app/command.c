@@ -96,6 +96,29 @@ static int cmd_sw(int argc, char **argv)
   return(0);
 }
 
+static int cmd_sp6t(int argc, char **argv)
+{
+  uint32_t switchN = 0;
+
+  if (argc == 2) {
+    switchN = strtoul(argv[1],NULL,0);
+    switch(switchN) {
+    case 1: set8769(J1); break;
+    case 2: set8769(J2); break;
+    case 3: set8769(J3); break;
+    case 4: set8769(J4); break;
+    case 5: set8769(J5); break;
+    case 6: set8769(J6); break;
+    default: myprintf("Switch can be 1,2,3,4,5,or 6\n");
+      return(1);
+    }
+  } else {
+    myprintf("Usage: sw <switch number>\n");
+    return(1);
+  }
+  return(0);
+}
+
 static int cmd_aux(int argc, char **argv)
 {
   uint32_t switchN = 0;
@@ -264,6 +287,7 @@ dispatchEntry mainCommands[] = {
   {"","testee",           "                      Test eeprom", cmd_testee, NULL},
 #endif
   {"","att",              "attenuation (0-70)    Set attenuation from 0->70dB", cmd_att, NULL},
+  {"","sp6t",             "switchnum             Switch 8769M sp6t to selected output", cmd_sp6t, NULL},
     //LAST ENTRY
   {NULL, NULL, NULL, NULL, NULL}
 };
