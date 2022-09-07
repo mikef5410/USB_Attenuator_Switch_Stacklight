@@ -74,8 +74,9 @@ download: $(PROG).bin
 	st-flash --reset write $(PROG).bin 0x08000000
 
 DFU: $(PROG).bin
+		@echo I will wait for you to go into DFU mode ...
 	dfu-suffix -c $(PROG).bin || dfu-suffix -a $(PROG).bin
-	dfu-util  -D $(PROG).bin -d 0483:df11 -a0 -s 0x08000000:leave #&& dfu-util -s 0x08000000 -e #-E 3
+	dfu-util  -D $(PROG).bin -d ,0483:df11 -v -w -a0 -s 0x08000000:leave #&& dfu-util -s 0x08000000 -e #-E 3
 
 
 include mk/tags.mk
