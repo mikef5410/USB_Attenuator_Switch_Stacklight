@@ -161,8 +161,8 @@ class_has 'validVidPids' => (
       [ 0x4161, 0x0001 ],
       [ 0x4161, 0x0002 ],
       [ 0x4161, 0x0004 ],
-     [ 0x4161, 0x0005 ],
-     [ 0x4161, 0x0006 ],
+      [ 0x4161, 0x0005 ],
+      [ 0x4161, 0x0006 ],
     ]
   }
 );
@@ -187,7 +187,7 @@ has 'dev' => (
   lazy      => 1,
 );
 has 'handle' => ( is => 'rw', );
-has 'usb'    => (
+has 'usb' => (
   is      => 'rw',
   isa     => 'USB::LibUSB',
   default => sub { USB::LibUSB->init(); }
@@ -256,7 +256,6 @@ sub connect {
   my $pid;
   my $dev;
   my $handle;
-
   if ( defined( $self->device ) ) {
     $dev = $self->device;
     goto FOUND;
@@ -428,7 +427,6 @@ sub sp6t {
   return ($res);
 }
 
-
 =over 4
 
 =item B<< $err = $attenswitch->spdt($switch, $select) >> 
@@ -523,21 +521,20 @@ sub log10 {
 }
 
 sub dewpoint {
-  my $self = shift;
-  my $temp = shift;
-  my $rh   = shift;
-
+  my $self               = shift;
+  my $temp               = shift;
+  my $rh                 = shift;
   my $HSENSOR_CONSTANT_A = 8.1332;
   my $HSENSOR_CONSTANT_B = 1762.39;
   my $HSENSOR_CONSTANT_C = 235.66;
-
-  if ($rh > 0 ) {
+  if ( $rh > 0 ) {
     my $partialPressure = 10.0**( $HSENSOR_CONSTANT_A - $HSENSOR_CONSTANT_B / ( $temp + $HSENSOR_CONSTANT_C ) );
-    my $dp = -$HSENSOR_CONSTANT_B / ( log10( $rh * $partialPressure / 100 ) - $HSENSOR_CONSTANT_A ) - $HSENSOR_CONSTANT_C;
+    my $dp =
+      -$HSENSOR_CONSTANT_B / ( log10( $rh * $partialPressure / 100 ) - $HSENSOR_CONSTANT_A ) - $HSENSOR_CONSTANT_C;
     $dp = int( ( 100.0 * $dp ) + 0.5 ) / 100.0;
     return ($dp);
   } else {
-    return(undef);
+    return (undef);
   }
 }
 
@@ -1101,6 +1098,6 @@ use Class::Enum (
   PROD_ATTEN70      => { ordinal => 3 },
   PROD_DUALSPDT     => { ordinal => 4 },
   PROD_PRESSURESENS => { ordinal => 5 },
-  PROD_KS8769M => { ordinal => 6 },
+  PROD_KS8769M      => { ordinal => 6 },
 );
 1;

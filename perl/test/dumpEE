@@ -11,7 +11,7 @@ use lib "$Bin/..";
 use lib "$Bin";
 my $sw = shift(@ARGV);
 use AttenSwitch;
-my $dut    = AttenSwitch->new(VIDPID=>[0x4161,0x00ff]);
+my $dut    = AttenSwitch->new( VIDPID => [ 0x4161, 0x00ff ] );
 my $result = $dut->connect();
 
 if ( $result == AttenSwitch::SUCCESS ) {

@@ -90,20 +90,21 @@ sub rescanButton_clicked_cb {
   clearListStore($usbListStore);
   @Devices = ();
   my $ix = 0;
- # my $ls = $usb->list_devices( $VID, undef );
-  my @ls = $usb->get_device_list( );
-  foreach my $dev ( @ls ) {
-    my $desc    = $dev->get_device_descriptor();
-    my $vend    = $desc->{idVendor};
-    my $prod    = $desc->{idProduct};
-    next if ($vend != $VID);
+
+  # my $ls = $usb->list_devices( $VID, undef );
+  my @ls = $usb->get_device_list();
+  foreach my $dev (@ls) {
+    my $desc = $dev->get_device_descriptor();
+    my $vend = $desc->{idVendor};
+    my $prod = $desc->{idProduct};
+    next if ( $vend != $VID );
     my $handle  = $dev->open();
     my $serIx   = $desc->{iSerialNumber};
-    my $serial  = $handle->get_string_descriptor_ascii( $serIx, 64 );
+    my $serial  = $handle->get_string_descriptor_ascii( $serIx,                 64 );
     my $mfg     = $handle->get_string_descriptor_ascii( $desc->{iManufacturer}, 256 );
-    my $product = $handle->get_string_descriptor_ascii( $desc->{iProduct}, 256 );
+    my $product = $handle->get_string_descriptor_ascii( $desc->{iProduct},      256 );
     $handle->close();
-    my $iter    = $usbListStore->insert_with_values(
+    my $iter = $usbListStore->insert_with_values(
       -1,
       0 => sprintf( "0x%04x", $vend ),
       1 => sprintf( "0x%04x", $prod ),
@@ -176,7 +177,7 @@ sub browserTreeView_selected {
   $currentDev = AttenSwitch->new( device => $dev );
   $currentDev->connect();
   statusbar( sprintf( "connected to %s %s", $prod, $model->get_value( $iter, 4 ) ) );
-  my $PID=$currentDev->VIDPID->[1];
+  my $PID = $currentDev->VIDPID->[1];
 SW: {
     if ( $PID == 0x0001 ) {    #Stacklight
       $builder->get_object("spdtFrame")->set_sensitive(0);
@@ -217,7 +218,7 @@ SW: {
       $builder->get_object("attenFrame")->set_sensitive(0);
       $builder->get_object("spdtPolarityFrame")->set_sensitive(0);
       last SW;
-    }    
+    }
     if ( $PID == 0x0006 ) {    #8769M
       $builder->get_object("spdtFrame")->set_sensitive(0);
       $builder->get_object("sp8tFrame")->set_sensitive(0);
@@ -225,7 +226,8 @@ SW: {
       $builder->get_object("attenFrame")->set_sensitive(0);
       $builder->get_object("spdtPolarityFrame")->set_sensitive(0);
       last SW;
-    }    
+    }
+
     #unknown
     $builder->get_object("spdtFrame")->set_sensitive(1);
     $builder->get_object("sp8tFrame")->set_sensitive(1);
@@ -369,7 +371,6 @@ SW: {
   }
 }
 
-
 sub attenCtrlAdj_value_changed_cb {
   my $widget = shift;
   my $data   = shift;
@@ -430,15 +431,15 @@ sub EEpromViewport_map_cb {
   my $s1High      = $builder->get_object('s1High');
   my $s2High      = $builder->get_object('s2High');
 
-   if ($magic != 0xAA) { #Invalid EEprom
-     $vidEntry->set_text("");
-     $pidEntry->set_text("");
-     $prodEntry->set_text("");
-     $serialEntry->set_text("");
-     $extraEntry->set_text("");
-     $s1High->set_active(0);
-     $s2High->set_active(0);
-     return;
+  if ( $magic != 0xAA ) {    #Invalid EEprom
+    $vidEntry->set_text("");
+    $pidEntry->set_text("");
+    $prodEntry->set_text("");
+    $serialEntry->set_text("");
+    $extraEntry->set_text("");
+    $s1High->set_active(0);
+    $s2High->set_active(0);
+    return;
   }
   my $strings = $currentDev->readEEStrings();
   my ( $vid,   $pid )   = $currentDev->eeVidPid();

@@ -5,27 +5,24 @@ use warnings;
 
 #Where to find our library and auxiliary code.
 use FindBin qw($Bin);
+
 #use lib $ENV{ATTENSW};
 use lib "$Bin/..";
 use lib "$Bin";
 use AttenSwitch;
-my $dut    = AttenSwitch->new( VIDPID => [0x4161,0x0005] );
+my $dut    = AttenSwitch->new( VIDPID => [ 0x4161, 0x0005 ] );
 my $result = $dut->connect();
-
 if ( $result == AttenSwitch::SUCCESS ) {
   print("Got device\n");
 }
-
-while(1) {
-  my $tp=$dut->getAirlinePT();
-  print "Airline temp: ",$tp->[1]," ℃, pressure: ",$tp->[0], " psi\n";
-  
-  my $thp=$dut->getAmbientTHP();
-  my $dp=$dut->dewpoint($thp->[0],$thp->[1]);
-  print "Ambient temp: ",$thp->[0]," ℃, Humidity: ",$thp->[1],"%, Pressure: ",$thp->[2],"mb"," Dewpoint: ",$dp," ℃\n";
+while (1) {
+  my $tp = $dut->getAirlinePT();
+  print "Airline temp: ", $tp->[1], " ℃, pressure: ", $tp->[0], " psi\n";
+  my $thp = $dut->getAmbientTHP();
+  my $dp  = $dut->dewpoint( $thp->[0], $thp->[1] );
+  print "Ambient temp: ", $thp->[0], " ℃, Humidity: ", $thp->[1], "%, Pressure: ", $thp->[2], "mb", " Dewpoint: ", $dp,
+    " ℃\n";
   sleep(10);
 }
 printf("ok\n");
-
-
 exit;
