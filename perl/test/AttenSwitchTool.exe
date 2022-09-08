@@ -1,0 +1,1826 @@
+#!/usr/bin/perl
+#
+use strict;
+use warnings;
+use FindBin qw($Bin);
+use lib $ENV{BCOM_PERL} || "/projects/Bcom-perl";
+use lib $ENV{PERL_GPIB} || "/projects/gpib";
+use lib "$Bin/..";
+use lib $Bin;
+use feature 'state';
+use Module::Runtime qw(use_module use_package_optimistically);
+use Device::USB;
+use USB::LibUSB;
+use Data::Dumper qw(Dumper);
+use AttenSwitch;
+use Gtk3 '-init';
+use Gtk3::SimpleList;
+use Glib 'TRUE', 'FALSE';
+## no critic (ValuesAndExpressions::ProhibitAccessOfPrivateData)
+$| = 1;
+my $builder      = Gtk3::Builder->new();
+my $gladef       = "AttenSwitchTool.glade";
+my $glade        = $gladef;
+my $VID          = 0x4161;
+my $usb          = USB::LibUSB->init();
+my @Devices      = ();
+my $currentDev   = undef;
+my $rescanActive = 0;
+my $s1s2Gang     = 0;
+my $gladestr     = "";
+loadUIfromData( \$gladestr );
+
+if ( length($gladestr) ) {
+  $builder->add_from_string($gladestr);
+} else {
+  if ( -f "$Bin/$gladef" ) {
+    $glade = "$Bin/$gladef";
+  } else {
+
+    #Search @INC for my glade file
+    foreach my $d (@INC) {
+      $glade = $d . "/" . $gladef;
+      last if ( -f $glade );
+    }
+  }
+  $builder->add_from_file($glade);
+}
+$builder->connect_signals();
+$builder->get_object('mainTopWin')->show_all;
+setupBrowserTree();
+
+#rescanButton_clicked_cb();
+Gtk3->main;    #Start the event loop
+exit(0);
+
+sub gtk_main_quit {
+  if ( defined($currentDev) ) {
+    $currentDev->disconnect();
+    undef($currentDev);
+  }
+  Gtk3->main_quit();
+}
+
+sub loadUIfromData {
+  my $strref = shift;
+  while (<DATA>) {
+    s/^\s*$//g;
+    $$strref .= $_;
+  }
+}
+
+sub statusbar {
+  my $str       = shift;
+  my $StatusBar = $builder->get_object('statusbar');
+  $StatusBar->remove_all(1);
+  $StatusBar->push( 1, $str );
+}
+
+#Scan the usb bus and build tree
+sub rescanButton_clicked_cb {
+  my $widget = shift;
+  my $data   = shift;
+  $rescanActive = 1;
+  if ( defined($currentDev) ) {
+    $currentDev->disconnect();
+    undef($currentDev);
+    statusbar("disconnected.");
+  }
+  my $usbListStore = $builder->get_object('usbListStore');
+  clearListStore($usbListStore);
+  @Devices = ();
+  my $ix = 0;
+
+  # my $ls = $usb->list_devices( $VID, undef );
+  my @ls = $usb->get_device_list();
+  foreach my $dev (@ls) {
+    my $desc = $dev->get_device_descriptor();
+    my $vend = $desc->{idVendor};
+    my $prod = $desc->{idProduct};
+    next if ( $vend != $VID );
+    my $handle  = $dev->open();
+    my $serIx   = $desc->{iSerialNumber};
+    my $serial  = $handle->get_string_descriptor_ascii( $serIx,                 64 );
+    my $mfg     = $handle->get_string_descriptor_ascii( $desc->{iManufacturer}, 256 );
+    my $product = $handle->get_string_descriptor_ascii( $desc->{iProduct},      256 );
+    $handle->close();
+    my $iter = $usbListStore->insert_with_values(
+      -1,
+      0 => sprintf( "0x%04x", $vend ),
+      1 => sprintf( "0x%04x", $prod ),
+      2 => $mfg,
+      3 => $product,
+      4 => $serial,
+      5 => $ix
+    );
+    $Devices[ $ix++ ] = $dev;
+  }
+  statusbar( sprintf( "%d devices found.", $ix ) );
+  $rescanActive = 0;
+}
+
+sub clearListStore {
+  my $l    = shift;
+  my $iter = $l->get_iter_from_string("0");
+  my $ok   = 1;
+  while ( $iter && $ok ) {
+    $ok = $l->remove($iter);
+  }
+}
+
+sub setupBrowserTree {
+  my $t = $builder->get_object('browserTreeView');
+  $t->append_column( makeColumn( 0, "Vid" ) );
+  $t->append_column( makeColumn( 1, "Pid" ) );
+  $t->append_column( makeColumn( 2, "Mfg" ) );
+  $t->append_column( makeColumn( 3, "Product" ) );
+  $t->append_column( makeColumn( 4, "Serial" ) );
+}
+
+sub makeColumn {
+  my $col    = shift;
+  my $title  = shift;
+  my $column = Gtk3::TreeViewColumn->new_with_attributes( $title, Gtk3::CellRendererText->new, text => $col );
+  $column->set_resizable(TRUE);
+  return ($column);
+}
+
+#Cause selected device to blink
+sub blinkButton_clicked_cb {
+  my $widget = shift;
+  my $data   = shift;
+  state $blink = 0;
+  return if ( !defined($currentDev) );
+  if ($blink) {
+    $currentDev->blink(0);
+    $blink = 0;
+  } else {
+    $currentDev->blink(1);
+    $blink = 1;
+  }
+}
+
+sub browserTreeView_selected {
+  my $widget = shift;
+  my $data   = shift;
+  return if ($rescanActive);
+  my $t = $builder->get_object('browserTreeView');
+  my ( $path, $col ) = $t->get_cursor();
+  my $model = $t->get_model();
+  my $iter  = $model->get_iter($path);
+  my $dev   = $Devices[ $model->get_value( $iter, 5 ) ];
+  my $prod  = $model->get_value( $iter, 3 );
+
+  if ( defined($currentDev) && defined( $currentDev->dev ) ) {
+    $currentDev->disconnect();
+  }
+  $currentDev = AttenSwitch->new( device => $dev );
+  $currentDev->connect();
+  statusbar( sprintf( "connected to %s %s", $prod, $model->get_value( $iter, 4 ) ) );
+  my $PID = $currentDev->VIDPID->[1];
+SW: {
+    if ( $PID == 0x0001 ) {    #Stacklight
+      $builder->get_object("spdtFrame")->set_sensitive(0);
+      $builder->get_object("sp8tFrame")->set_sensitive(0);
+      $builder->get_object("attenFrame")->set_sensitive(0);
+      $builder->get_object("spdtPolarityFrame")->set_sensitive(0);
+      last SW;
+    }
+    if ( $PID == 0x0002 ) {    #MapleOLT test rig
+      $builder->get_object("spdtFrame")->set_sensitive(1);
+      $builder->get_object("sp8tFrame")->set_sensitive(1);
+      $builder->get_object("attenFrame")->set_sensitive(0);
+      $builder->get_object("spdtPolarityFrame")->set_sensitive(1);
+      last SW;
+    }
+    if ( $PID == 0x0003 ) {    #Attenuator
+      $builder->get_object("spdtFrame")->set_sensitive(0);
+      $builder->get_object("sp8tFrame")->set_sensitive(0);
+      $builder->get_object("attenFrame")->set_sensitive(1);
+      $builder->get_object("spdtPolarityFrame")->set_sensitive(0);
+      last SW;
+    }
+    if ( $PID == 0x0004 ) {    #Dual SPDT
+      $builder->get_object("spdtFrame")->set_sensitive(1);
+      $builder->get_object("sp8tFrame")->set_sensitive(0);
+      $builder->get_object("attenFrame")->set_sensitive(0);
+      $builder->get_object("spdtPolarityFrame")->set_sensitive(1);
+      last SW;
+    }
+
+    #unknown
+    $builder->get_object("spdtFrame")->set_sensitive(1);
+    $builder->get_object("sp8tFrame")->set_sensitive(1);
+    $builder->get_object("attenFrame")->set_sensitive(1);
+  }
+}
+
+sub spdtGangButton_clicked_cb {
+  my $widget = shift;
+  my $data   = shift;
+  my $s2a    = $builder->get_object("s2a_rb");
+  my $s2b    = $builder->get_object("s2b_rb");
+  $s1s2Gang = ( $widget->get_active() + 0 );
+  if ($s1s2Gang) {
+    $s2a->set_sensitive(0);
+    $s2b->set_sensitive(0);
+  } else {
+    $s2a->set_sensitive(1);
+    $s2b->set_sensitive(1);
+  }
+}
+
+sub s1_clicked {
+  my $widget = shift;
+  my $data   = shift;
+  my $s1a    = $builder->get_object("s1a_rb");
+  my $s2a    = $builder->get_object("s2a_rb");
+  return if ( !defined($currentDev) );
+  if ( $s1a->get_active() ) {
+    $currentDev->spdt( AttenSwitch::SPDTSEL::SW1, AttenSwitch::SPDTSETTING::J1SEL );
+    if ($s1s2Gang) {
+      $currentDev->spdt( AttenSwitch::SPDTSEL::SW2, AttenSwitch::SPDTSETTING::J1SEL );
+    }
+  } else {
+    $currentDev->spdt( AttenSwitch::SPDTSEL::SW1, AttenSwitch::SPDTSETTING::J2SEL );
+    if ($s1s2Gang) {
+      $currentDev->spdt( AttenSwitch::SPDTSEL::SW2, AttenSwitch::SPDTSETTING::J2SEL );
+    }
+  }
+}
+
+sub s2_clicked {
+  my $widget = shift;
+  my $data   = shift;
+  my $s1a    = $builder->get_object("s2a_rb");
+  return if ( !defined($currentDev) );
+  if ( $s1a->get_active() ) {
+    $currentDev->spdt( AttenSwitch::SPDTSEL::SW2, AttenSwitch::SPDTSETTING::J1SEL );
+  } else {
+    $currentDev->spdt( AttenSwitch::SPDTSEL::SW2, AttenSwitch::SPDTSETTING::J2SEL );
+  }
+}
+
+sub sp8t_clicked {
+  my $widget = shift;
+  my $data   = shift;
+
+  #We get triggered twice. Once for the button that goes on, and once for the button that goes off.
+  #Ignore one of them
+  state $secondEvent = 0;
+  if ( $secondEvent == 1 ) {
+    $secondEvent = 0;
+    return;
+  }
+  $secondEvent = 1;
+  return if ( !defined($currentDev) );
+SW: {
+    if ( $builder->get_object("sp8t_j1")->get_active() ) {
+      $currentDev->sp8t(AttenSwitch::SP8TSETTING::J1);
+      last SW;
+    }
+    if ( $builder->get_object("sp8t_j2")->get_active() ) {
+      $currentDev->sp8t(AttenSwitch::SP8TSETTING::J2);
+      last SW;
+    }
+    if ( $builder->get_object("sp8t_j3")->get_active() ) {
+      $currentDev->sp8t(AttenSwitch::SP8TSETTING::J3);
+      last SW;
+    }
+    if ( $builder->get_object("sp8t_j4")->get_active() ) {
+      $currentDev->sp8t(AttenSwitch::SP8TSETTING::J4);
+      last SW;
+    }
+    if ( $builder->get_object("sp8t_j5")->get_active() ) {
+      $currentDev->sp8t(AttenSwitch::SP8TSETTING::J5);
+      last SW;
+    }
+    if ( $builder->get_object("sp8t_j6")->get_active() ) {
+      $currentDev->sp8t(AttenSwitch::SP8TSETTING::J6);
+      last SW;
+    }
+    if ( $builder->get_object("sp8t_j7")->get_active() ) {
+      $currentDev->sp8t(AttenSwitch::SP8TSETTING::J7);
+      last SW;
+    }
+    if ( $builder->get_object("sp8t_j8")->get_active() ) {
+      $currentDev->sp8t(AttenSwitch::SP8TSETTING::J8);
+      last SW;
+    }
+  }
+}
+
+sub attenCtrlAdj_value_changed_cb {
+  my $widget = shift;
+  my $data   = shift;
+  return if ( !defined($currentDev) );
+  my $value = $widget->get_value();
+  $value = 10 * int( ( $value / 10 ) + 0.5 );
+  $value = ( $value < 0 )  ? 0  : $value;
+  $value = ( $value > 70 ) ? 70 : $value;
+  $widget->set_value($value);
+  my $setting;
+SW: {
+    if ( $value == 0 ) {
+      $setting = AttenSwitch::ATTEN::ATT_0DB;
+      last SW;
+    }
+    if ( $value == 10 ) {
+      $setting = AttenSwitch::ATTEN::ATT_10DB;
+      last SW;
+    }
+    if ( $value == 20 ) {
+      $setting = AttenSwitch::ATTEN::ATT_20DB;
+      last SW;
+    }
+    if ( $value == 30 ) {
+      $setting = AttenSwitch::ATTEN::ATT_30DB;
+      last SW;
+    }
+    if ( $value == 40 ) {
+      $setting = AttenSwitch::ATTEN::ATT_40DB;
+      last SW;
+    }
+    if ( $value == 50 ) {
+      $setting = AttenSwitch::ATTEN::ATT_50DB;
+      last SW;
+    }
+    if ( $value == 60 ) {
+      $setting = AttenSwitch::ATTEN::ATT_60DB;
+      last SW;
+    }
+    if ( $value == 70 ) {
+      $setting = AttenSwitch::ATTEN::ATT_70DB;
+      last SW;
+    }
+  }
+  $currentDev->atten($setting);
+}
+
+sub EEpromViewport_map_cb {
+  return if ( !defined($currentDev) );
+
+  #printf("EEprom tab entered.\n");
+  my $magic       = 0 + $currentDev->eeMagic();
+  my $vidEntry    = $builder->get_object('vidEntry');
+  my $pidEntry    = $builder->get_object('pidEntry');
+  my $prodEntry   = $builder->get_object('prodEntry');
+  my $serialEntry = $builder->get_object('serialEntry');
+  my $extraEntry  = $builder->get_object('extraEntry');
+  my $s1High      = $builder->get_object('s1High');
+  my $s2High      = $builder->get_object('s2High');
+
+  if ( $magic != 0xAA ) {    #Invalid EEprom
+    $vidEntry->set_text("");
+    $pidEntry->set_text("");
+    $prodEntry->set_text("");
+    $serialEntry->set_text("");
+    $extraEntry->set_text("");
+    $s1High->set_active(0);
+    $s2High->set_active(0);
+    return;
+  }
+  my $strings = $currentDev->readEEStrings();
+  my ( $vid,   $pid )   = $currentDev->eeVidPid();
+  my ( $s1pol, $s2pol ) = $currentDev->eePolarity();
+  $vidEntry->set_text( sprintf( "0x%04x", $vid ) );
+  $pidEntry->set_text( sprintf( "0x%04x", $pid ) );
+  $prodEntry->set_text( $strings->[1] );
+  $serialEntry->set_text( $strings->[2] );
+  $extraEntry->set_text( $strings->[3] );
+  $s1High->set_active( $s1pol != 0 );
+  $s2High->set_active( $s2pol != 0 );
+  return;
+}
+
+sub aboutActivated {
+  my $about_dialog = $builder->get_object('aboutDialog');
+  $about_dialog->run();
+  $about_dialog->hide();
+}
+
+sub writePolarity_clicked {
+  my $widget = shift;
+  my $data   = shift;
+  return if ( !defined($currentDev) );
+  $currentDev->blink(1);
+  if ( !confirmWrite() ) {
+    $currentDev->blink(0);
+    return;
+  }
+  my $s1pol = $builder->get_object('s1High')->get_active();
+  my $s2pol = $builder->get_object('s2High')->get_active();
+  $currentDev->eePolarity( $s1pol, $s2pol );
+  $currentDev->blink(0);
+  return;
+}
+
+sub writeStrings_clicked {
+  my $widget = shift;
+  my $data   = shift;
+  return if ( !defined($currentDev) );
+  $currentDev->blink(1);
+  if ( !confirmWrite() ) {
+    $currentDev->blink(0);
+    return;
+  }
+  my $strings;
+  $strings->[0] = "";
+  $strings->[1] = $builder->get_object('prodEntry')->get_text();
+  $strings->[2] = $builder->get_object('serialEntry')->get_text();
+  $strings->[3] = $builder->get_object('extraEntry')->get_text();
+  $currentDev->writeEEStrings($strings);
+  $currentDev->blink(0);
+}
+
+sub writeVidPid_clicked {
+  my $widget = shift;
+  my $data   = shift;
+  return if ( !defined($currentDev) );
+  $currentDev->blink(1);
+  if ( !confirmWrite() ) {
+    $currentDev->blink(0);
+    return;
+  }
+  my $vid = hex( $builder->get_object('vidEntry')->get_text() );
+  my $pid = hex( $builder->get_object('pidEntry')->get_text() );
+  $currentDev->eeMagic(0xAA);
+  $currentDev->eeVidPid( $vid, $pid );
+  $currentDev->blink(0);
+}
+
+sub eraseEEbutton_clicked_cb {
+  my $widget = shift;
+  my $data   = shift;
+  return if ( !defined($currentDev) );
+  $currentDev->blink(1);
+  if ( !confirmWrite() ) {
+    $currentDev->blink(0);
+    return;
+  }
+  $currentDev->eraseAllEE();
+  $currentDev->blink(0);
+  return;
+}
+
+sub confirmWrite {
+  my $message = shift || "OK to Write?";
+  my $dialog  = $builder->get_object("OKtoWriteDialog");
+  my $label   = $builder->get_object("OKtoWriteLabel");
+  $label->set_text($message);
+  my $result = $dialog->run();
+  $dialog->hide();
+  return ($result);
+}
+
+sub writeConfirmedClicked {
+  my $widget = shift;
+  my $data   = shift;
+  $data->response(1);
+}
+
+sub writeCancelClicked {
+  my $widget = shift;
+  my $data   = shift;
+  $data->response(0);
+}
+
+sub dumpCloseClicked {
+  my $widget = shift;
+  my $data   = shift;
+  $data->response(1);
+}
+
+sub dumpButton_clicked {
+  my $widget     = shift;
+  my $data       = shift;
+  my $textView   = $builder->get_object('eeDumpTextView');
+  my $dumpDialog = $builder->get_object('eeDumpWindow');
+  my $textBuffer = Gtk3::TextBuffer->new();
+  $textView->set_buffer($textBuffer);
+  my $buf = $currentDev->readEE( 0, $currentDev->eepromSize );
+  $textBuffer->set_text( bufdump($buf) );
+  $dumpDialog->run();
+  $dumpDialog->hide();
+}
+
+sub bufdump {
+  my $buf    = shift;
+  my $ascii  = "";
+  my $j      = 0;
+  my $outbuf = "";
+  $outbuf = sprintf("0000 - ");
+  for ( $j = 0 ; $j < length($buf) ; $j++ ) {
+    my $val = unpack( "C", substr( $buf, $j, 1 ) );
+    if ( $j && !( $j % 16 ) ) {
+      $outbuf .= sprintf("   $ascii");
+      $ascii = "";
+      $outbuf .= sprintf( "\n%04x - ", $j );
+    }
+    if ( ( $val < 0x20 ) || ( $val > 0x7E ) ) {
+      $ascii .= '.';
+    } else {
+      $ascii .= chr($val);
+    }
+    $outbuf .= sprintf( "%02x ", $val );
+  }
+  my $adj = ( $j % 16 > 0 ) ? 16 - ( $j % 16 ) : 0;
+  $outbuf .= sprintf( '   ' x $adj . "   " . $ascii . "\n" );
+  return ($outbuf);
+}
+__DATA__
+
+
+
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Generated with glade 3.20.2 -->
+<interface>
+  <requires lib="gtk+" version="3.20"/>
+  <object class="GtkAdjustment" id="attenCtrlAdj">
+    <property name="upper">70</property>
+    <property name="step_increment">10</property>
+    <property name="page_increment">10</property>
+    <signal name="value-changed" handler="attenCtrlAdj_value_changed_cb" swapped="no"/>
+  </object>
+  <object class="GtkListStore" id="usbListStore">
+    <columns>
+      <!-- column-name Vid -->
+      <column type="gchararray"/>
+      <!-- column-name Pid -->
+      <column type="gchararray"/>
+      <!-- column-name Mfg -->
+      <column type="gchararray"/>
+      <!-- column-name Product -->
+      <column type="gchararray"/>
+      <!-- column-name Serial -->
+      <column type="gchararray"/>
+      <!-- column-name DevicesIndex -->
+      <column type="guint"/>
+    </columns>
+  </object>
+  <object class="GtkApplicationWindow" id="mainTopWin">
+    <property name="width_request">640</property>
+    <property name="height_request">480</property>
+    <property name="can_focus">False</property>
+    <signal name="destroy" handler="gtk_main_quit" swapped="no"/>
+    <child>
+      <object class="GtkBox">
+        <property name="visible">True</property>
+        <property name="can_focus">False</property>
+        <property name="orientation">vertical</property>
+        <child>
+          <object class="GtkMenuBar">
+            <property name="visible">True</property>
+            <property name="can_focus">False</property>
+            <child>
+              <object class="GtkMenuItem">
+                <property name="visible">True</property>
+                <property name="can_focus">False</property>
+                <property name="label" translatable="yes">_File</property>
+                <property name="use_underline">True</property>
+                <child type="submenu">
+                  <object class="GtkMenu">
+                    <property name="visible">True</property>
+                    <property name="can_focus">False</property>
+                    <child>
+                      <object class="GtkImageMenuItem">
+                        <property name="label">gtk-quit</property>
+                        <property name="visible">True</property>
+                        <property name="can_focus">False</property>
+                        <property name="use_underline">True</property>
+                        <property name="use_stock">True</property>
+                        <signal name="activate" handler="gtk_main_quit" swapped="no"/>
+                      </object>
+                    </child>
+                  </object>
+                </child>
+              </object>
+            </child>
+            <child>
+              <object class="GtkMenuItem">
+                <property name="visible">True</property>
+                <property name="can_focus">False</property>
+                <property name="label" translatable="yes">_Help</property>
+                <property name="use_underline">True</property>
+                <child type="submenu">
+                  <object class="GtkMenu">
+                    <property name="visible">True</property>
+                    <property name="can_focus">False</property>
+                    <child>
+                      <object class="GtkImageMenuItem">
+                        <property name="label">gtk-about</property>
+                        <property name="visible">True</property>
+                        <property name="can_focus">False</property>
+                        <property name="use_underline">True</property>
+                        <property name="use_stock">True</property>
+                        <signal name="activate" handler="aboutActivated" swapped="no"/>
+                      </object>
+                    </child>
+                  </object>
+                </child>
+              </object>
+            </child>
+          </object>
+          <packing>
+            <property name="expand">False</property>
+            <property name="fill">True</property>
+            <property name="position">0</property>
+          </packing>
+        </child>
+        <child>
+          <object class="GtkNotebook">
+            <property name="visible">True</property>
+            <property name="can_focus">True</property>
+            <child>
+              <object class="GtkViewport" id="BrowserViewport">
+                <property name="visible">True</property>
+                <property name="can_focus">False</property>
+                <child>
+                  <object class="GtkBox">
+                    <property name="visible">True</property>
+                    <property name="can_focus">False</property>
+                    <child>
+                      <object class="GtkScrolledWindow">
+                        <property name="visible">True</property>
+                        <property name="can_focus">True</property>
+                        <property name="shadow_type">in</property>
+                        <property name="propagate_natural_width">True</property>
+                        <property name="propagate_natural_height">True</property>
+                        <child>
+                          <object class="GtkTreeView" id="browserTreeView">
+                            <property name="visible">True</property>
+                            <property name="can_focus">True</property>
+                            <property name="model">usbListStore</property>
+                            <property name="hover_expand">True</property>
+                            <property name="enable_grid_lines">both</property>
+                            <property name="activate_on_single_click">True</property>
+                            <signal name="cursor-changed" handler="browserTreeView_selected" swapped="no"/>
+                            <child internal-child="selection">
+                              <object class="GtkTreeSelection"/>
+                            </child>
+                          </object>
+                        </child>
+                      </object>
+                      <packing>
+                        <property name="expand">True</property>
+                        <property name="fill">True</property>
+                        <property name="position">0</property>
+                      </packing>
+                    </child>
+                    <child>
+                      <object class="GtkGrid">
+                        <property name="visible">True</property>
+                        <property name="can_focus">False</property>
+                        <property name="row_spacing">5</property>
+                        <property name="column_spacing">5</property>
+                        <child>
+                          <object class="GtkButton" id="rescanButton">
+                            <property name="label" translatable="yes">Rescan</property>
+                            <property name="visible">True</property>
+                            <property name="can_focus">True</property>
+                            <property name="receives_default">True</property>
+                            <signal name="clicked" handler="rescanButton_clicked_cb" swapped="no"/>
+                          </object>
+                          <packing>
+                            <property name="left_attach">0</property>
+                            <property name="top_attach">0</property>
+                          </packing>
+                        </child>
+                        <child>
+                          <object class="GtkButton" id="blinkButton">
+                            <property name="label" translatable="yes">Blink</property>
+                            <property name="visible">True</property>
+                            <property name="can_focus">True</property>
+                            <property name="receives_default">True</property>
+                            <signal name="clicked" handler="blinkButton_clicked_cb" swapped="no"/>
+                          </object>
+                          <packing>
+                            <property name="left_attach">0</property>
+                            <property name="top_attach">1</property>
+                          </packing>
+                        </child>
+                      </object>
+                      <packing>
+                        <property name="expand">False</property>
+                        <property name="fill">True</property>
+                        <property name="padding">1</property>
+                        <property name="position">1</property>
+                      </packing>
+                    </child>
+                  </object>
+                </child>
+              </object>
+            </child>
+            <child type="tab">
+              <object class="GtkLabel">
+                <property name="visible">True</property>
+                <property name="can_focus">False</property>
+                <property name="label" translatable="yes">Browser</property>
+              </object>
+              <packing>
+                <property name="tab_fill">False</property>
+              </packing>
+            </child>
+            <child>
+              <object class="GtkViewport" id="DeviceControlViewport">
+                <property name="visible">True</property>
+                <property name="can_focus">False</property>
+                <child>
+                  <object class="GtkBox">
+                    <property name="visible">True</property>
+                    <property name="can_focus">False</property>
+                    <child>
+                      <object class="GtkFrame" id="spdtFrame">
+                        <property name="visible">True</property>
+                        <property name="can_focus">False</property>
+                        <property name="label_xalign">0</property>
+                        <child>
+                          <object class="GtkAlignment">
+                            <property name="visible">True</property>
+                            <property name="can_focus">False</property>
+                            <property name="left_padding">12</property>
+                            <child>
+                              <object class="GtkGrid">
+                                <property name="visible">True</property>
+                                <property name="can_focus">False</property>
+                                <child>
+                                  <object class="GtkLabel">
+                                    <property name="visible">True</property>
+                                    <property name="can_focus">False</property>
+                                    <property name="label" translatable="yes">S1</property>
+                                  </object>
+                                  <packing>
+                                    <property name="left_attach">0</property>
+                                    <property name="top_attach">0</property>
+                                  </packing>
+                                </child>
+                                <child>
+                                  <object class="GtkLabel">
+                                    <property name="visible">True</property>
+                                    <property name="can_focus">False</property>
+                                    <property name="label" translatable="yes">S2</property>
+                                  </object>
+                                  <packing>
+                                    <property name="left_attach">1</property>
+                                    <property name="top_attach">0</property>
+                                  </packing>
+                                </child>
+                                <child>
+                                  <object class="GtkRadioButton" id="s1a_rb">
+                                    <property name="label" translatable="yes">A (1)</property>
+                                    <property name="visible">True</property>
+                                    <property name="can_focus">True</property>
+                                    <property name="receives_default">False</property>
+                                    <property name="active">True</property>
+                                    <property name="draw_indicator">True</property>
+                                    <property name="group">s1b_rb</property>
+                                    <signal name="clicked" handler="s1_clicked" swapped="no"/>
+                                  </object>
+                                  <packing>
+                                    <property name="left_attach">0</property>
+                                    <property name="top_attach">1</property>
+                                  </packing>
+                                </child>
+                                <child>
+                                  <object class="GtkRadioButton" id="s1b_rb">
+                                    <property name="label" translatable="yes">B (2)</property>
+                                    <property name="visible">True</property>
+                                    <property name="can_focus">True</property>
+                                    <property name="receives_default">False</property>
+                                    <property name="active">True</property>
+                                    <property name="draw_indicator">True</property>
+                                    <property name="group">s1a_rb</property>
+                                    <signal name="clicked" handler="s1_clicked" swapped="no"/>
+                                  </object>
+                                  <packing>
+                                    <property name="left_attach">0</property>
+                                    <property name="top_attach">2</property>
+                                  </packing>
+                                </child>
+                                <child>
+                                  <object class="GtkRadioButton" id="s2a_rb">
+                                    <property name="label" translatable="yes">A (2)</property>
+                                    <property name="visible">True</property>
+                                    <property name="can_focus">True</property>
+                                    <property name="receives_default">False</property>
+                                    <property name="active">True</property>
+                                    <property name="draw_indicator">True</property>
+                                    <property name="group">s2b_rb</property>
+                                    <signal name="clicked" handler="s2_clicked" swapped="no"/>
+                                  </object>
+                                  <packing>
+                                    <property name="left_attach">1</property>
+                                    <property name="top_attach">1</property>
+                                  </packing>
+                                </child>
+                                <child>
+                                  <object class="GtkRadioButton" id="s2b_rb">
+                                    <property name="label" translatable="yes">B (2)</property>
+                                    <property name="visible">True</property>
+                                    <property name="can_focus">True</property>
+                                    <property name="receives_default">False</property>
+                                    <property name="active">True</property>
+                                    <property name="draw_indicator">True</property>
+                                    <property name="group">s2a_rb</property>
+                                    <signal name="clicked" handler="s2_clicked" swapped="no"/>
+                                  </object>
+                                  <packing>
+                                    <property name="left_attach">1</property>
+                                    <property name="top_attach">2</property>
+                                  </packing>
+                                </child>
+                                <child>
+                                  <object class="GtkToggleButton" id="spdtGangButton">
+                                    <property name="label" translatable="yes">Gang</property>
+                                    <property name="visible">True</property>
+                                    <property name="can_focus">True</property>
+                                    <property name="receives_default">True</property>
+                                    <signal name="clicked" handler="spdtGangButton_clicked_cb" swapped="no"/>
+                                  </object>
+                                  <packing>
+                                    <property name="left_attach">0</property>
+                                    <property name="top_attach">3</property>
+                                    <property name="width">2</property>
+                                  </packing>
+                                </child>
+                              </object>
+                            </child>
+                          </object>
+                        </child>
+                        <child type="label">
+                          <object class="GtkLabel">
+                            <property name="visible">True</property>
+                            <property name="can_focus">False</property>
+                            <property name="label" translatable="yes">SPDT	</property>
+                          </object>
+                        </child>
+                      </object>
+                      <packing>
+                        <property name="expand">True</property>
+                        <property name="fill">True</property>
+                        <property name="padding">3</property>
+                        <property name="position">0</property>
+                      </packing>
+                    </child>
+                    <child>
+                      <object class="GtkFrame" id="sp8tFrame">
+                        <property name="visible">True</property>
+                        <property name="can_focus">False</property>
+                        <property name="label_xalign">0</property>
+                        <child>
+                          <object class="GtkAlignment">
+                            <property name="visible">True</property>
+                            <property name="can_focus">False</property>
+                            <property name="left_padding">12</property>
+                            <child>
+                              <object class="GtkBox">
+                                <property name="visible">True</property>
+                                <property name="can_focus">False</property>
+                                <property name="orientation">vertical</property>
+                                <child>
+                                  <object class="GtkRadioButton" id="sp8t_j1">
+                                    <property name="label" translatable="yes">J1</property>
+                                    <property name="visible">True</property>
+                                    <property name="can_focus">True</property>
+                                    <property name="receives_default">False</property>
+                                    <property name="active">True</property>
+                                    <property name="draw_indicator">True</property>
+                                    <property name="group">sp8t_j2</property>
+                                    <signal name="clicked" handler="sp8t_clicked" swapped="no"/>
+                                  </object>
+                                  <packing>
+                                    <property name="expand">False</property>
+                                    <property name="fill">True</property>
+                                    <property name="position">0</property>
+                                  </packing>
+                                </child>
+                                <child>
+                                  <object class="GtkRadioButton" id="sp8t_j2">
+                                    <property name="label" translatable="yes">J2</property>
+                                    <property name="visible">True</property>
+                                    <property name="can_focus">True</property>
+                                    <property name="receives_default">False</property>
+                                    <property name="active">True</property>
+                                    <property name="draw_indicator">True</property>
+                                    <property name="group">sp8t_j1</property>
+                                    <signal name="clicked" handler="sp8t_clicked" swapped="no"/>
+                                  </object>
+                                  <packing>
+                                    <property name="expand">False</property>
+                                    <property name="fill">True</property>
+                                    <property name="position">1</property>
+                                  </packing>
+                                </child>
+                                <child>
+                                  <object class="GtkRadioButton" id="sp8t_j3">
+                                    <property name="label" translatable="yes">J3</property>
+                                    <property name="visible">True</property>
+                                    <property name="can_focus">True</property>
+                                    <property name="receives_default">False</property>
+                                    <property name="active">True</property>
+                                    <property name="draw_indicator">True</property>
+                                    <property name="group">sp8t_j1</property>
+                                    <signal name="clicked" handler="sp8t_clicked" swapped="no"/>
+                                  </object>
+                                  <packing>
+                                    <property name="expand">False</property>
+                                    <property name="fill">True</property>
+                                    <property name="position">2</property>
+                                  </packing>
+                                </child>
+                                <child>
+                                  <object class="GtkRadioButton" id="sp8t_j4">
+                                    <property name="label" translatable="yes">J4</property>
+                                    <property name="visible">True</property>
+                                    <property name="can_focus">True</property>
+                                    <property name="receives_default">False</property>
+                                    <property name="active">True</property>
+                                    <property name="draw_indicator">True</property>
+                                    <property name="group">sp8t_j1</property>
+                                    <signal name="clicked" handler="sp8t_clicked" swapped="no"/>
+                                  </object>
+                                  <packing>
+                                    <property name="expand">False</property>
+                                    <property name="fill">True</property>
+                                    <property name="position">3</property>
+                                  </packing>
+                                </child>
+                                <child>
+                                  <object class="GtkRadioButton" id="sp8t_j5">
+                                    <property name="label" translatable="yes">J5</property>
+                                    <property name="visible">True</property>
+                                    <property name="can_focus">True</property>
+                                    <property name="receives_default">False</property>
+                                    <property name="active">True</property>
+                                    <property name="draw_indicator">True</property>
+                                    <property name="group">sp8t_j1</property>
+                                    <signal name="clicked" handler="sp8t_clicked" swapped="no"/>
+                                  </object>
+                                  <packing>
+                                    <property name="expand">False</property>
+                                    <property name="fill">True</property>
+                                    <property name="position">4</property>
+                                  </packing>
+                                </child>
+                                <child>
+                                  <object class="GtkRadioButton" id="sp8t_j6">
+                                    <property name="label" translatable="yes">J6</property>
+                                    <property name="visible">True</property>
+                                    <property name="can_focus">True</property>
+                                    <property name="receives_default">False</property>
+                                    <property name="active">True</property>
+                                    <property name="draw_indicator">True</property>
+                                    <property name="group">sp8t_j1</property>
+                                    <signal name="clicked" handler="sp8t_clicked" swapped="no"/>
+                                  </object>
+                                  <packing>
+                                    <property name="expand">False</property>
+                                    <property name="fill">True</property>
+                                    <property name="position">5</property>
+                                  </packing>
+                                </child>
+                                <child>
+                                  <object class="GtkRadioButton" id="sp8t_j7">
+                                    <property name="label" translatable="yes">J7</property>
+                                    <property name="visible">True</property>
+                                    <property name="can_focus">True</property>
+                                    <property name="receives_default">False</property>
+                                    <property name="active">True</property>
+                                    <property name="draw_indicator">True</property>
+                                    <property name="group">sp8t_j1</property>
+                                    <signal name="clicked" handler="sp8t_clicked" swapped="no"/>
+                                  </object>
+                                  <packing>
+                                    <property name="expand">False</property>
+                                    <property name="fill">True</property>
+                                    <property name="position">6</property>
+                                  </packing>
+                                </child>
+                                <child>
+                                  <object class="GtkRadioButton" id="sp8t_j8">
+                                    <property name="label" translatable="yes">J8</property>
+                                    <property name="visible">True</property>
+                                    <property name="can_focus">True</property>
+                                    <property name="receives_default">False</property>
+                                    <property name="active">True</property>
+                                    <property name="draw_indicator">True</property>
+                                    <property name="group">sp8t_j1</property>
+                                    <signal name="clicked" handler="sp8t_clicked" swapped="no"/>
+                                  </object>
+                                  <packing>
+                                    <property name="expand">False</property>
+                                    <property name="fill">True</property>
+                                    <property name="position">7</property>
+                                  </packing>
+                                </child>
+                              </object>
+                            </child>
+                          </object>
+                        </child>
+                        <child type="label">
+                          <object class="GtkLabel">
+                            <property name="visible">True</property>
+                            <property name="can_focus">False</property>
+                            <property name="label" translatable="yes">SP8T</property>
+                          </object>
+                        </child>
+                      </object>
+                      <packing>
+                        <property name="expand">True</property>
+                        <property name="fill">True</property>
+                        <property name="padding">3</property>
+                        <property name="position">1</property>
+                      </packing>
+                    </child>
+                    <child>
+                      <object class="GtkFrame" id="attenFrame">
+                        <property name="visible">True</property>
+                        <property name="can_focus">False</property>
+                        <property name="label_xalign">0</property>
+                        <child>
+                          <object class="GtkAlignment">
+                            <property name="visible">True</property>
+                            <property name="can_focus">False</property>
+                            <property name="left_padding">12</property>
+                            <child>
+                              <object class="GtkBox">
+                                <property name="visible">True</property>
+                                <property name="can_focus">False</property>
+                                <property name="orientation">vertical</property>
+                                <child>
+                                  <object class="GtkScale" id="AttenCtrlScale">
+                                    <property name="visible">True</property>
+                                    <property name="can_focus">True</property>
+                                    <property name="orientation">vertical</property>
+                                    <property name="adjustment">attenCtrlAdj</property>
+                                    <property name="inverted">True</property>
+                                    <property name="restrict_to_fill_level">False</property>
+                                    <property name="fill_level">70</property>
+                                    <property name="digits">0</property>
+                                    <property name="has_origin">False</property>
+                                  </object>
+                                  <packing>
+                                    <property name="expand">True</property>
+                                    <property name="fill">True</property>
+                                    <property name="position">0</property>
+                                  </packing>
+                                </child>
+                                <child>
+                                  <object class="GtkSpinButton" id="attenCtrlSpin">
+                                    <property name="visible">True</property>
+                                    <property name="can_focus">True</property>
+                                    <property name="adjustment">attenCtrlAdj</property>
+                                    <property name="climb_rate">2.2351741811588166e-10</property>
+                                  </object>
+                                  <packing>
+                                    <property name="expand">False</property>
+                                    <property name="fill">True</property>
+                                    <property name="position">1</property>
+                                  </packing>
+                                </child>
+                              </object>
+                            </child>
+                          </object>
+                        </child>
+                        <child type="label">
+                          <object class="GtkLabel">
+                            <property name="visible">True</property>
+                            <property name="can_focus">False</property>
+                            <property name="label" translatable="yes">Attenuator</property>
+                          </object>
+                        </child>
+                      </object>
+                      <packing>
+                        <property name="expand">True</property>
+                        <property name="fill">True</property>
+                        <property name="padding">3</property>
+                        <property name="position">2</property>
+                      </packing>
+                    </child>
+                  </object>
+                </child>
+              </object>
+              <packing>
+                <property name="position">1</property>
+              </packing>
+            </child>
+            <child type="tab">
+              <object class="GtkLabel">
+                <property name="visible">True</property>
+                <property name="can_focus">False</property>
+                <property name="label" translatable="yes">Device Control</property>
+              </object>
+              <packing>
+                <property name="position">1</property>
+                <property name="tab_fill">False</property>
+              </packing>
+            </child>
+            <child>
+              <object class="GtkViewport" id="EEpromViewport">
+                <property name="visible">True</property>
+                <property name="can_focus">False</property>
+                <signal name="map" handler="EEpromViewport_map_cb" swapped="no"/>
+                <child>
+                  <object class="GtkBox">
+                    <property name="visible">True</property>
+                    <property name="can_focus">False</property>
+                    <property name="orientation">vertical</property>
+                    <property name="spacing">7</property>
+                    <child>
+                      <object class="GtkBox">
+                        <property name="visible">True</property>
+                        <property name="can_focus">False</property>
+                        <property name="spacing">1</property>
+                        <child>
+                          <object class="GtkLabel">
+                            <property name="visible">True</property>
+                            <property name="can_focus">False</property>
+                            <property name="label" translatable="yes">VID:</property>
+                          </object>
+                          <packing>
+                            <property name="expand">False</property>
+                            <property name="fill">True</property>
+                            <property name="position">0</property>
+                          </packing>
+                        </child>
+                        <child>
+                          <object class="GtkEntry" id="vidEntry">
+                            <property name="visible">True</property>
+                            <property name="can_focus">True</property>
+                          </object>
+                          <packing>
+                            <property name="expand">False</property>
+                            <property name="fill">True</property>
+                            <property name="position">1</property>
+                          </packing>
+                        </child>
+                        <child>
+                          <object class="GtkSeparator">
+                            <property name="visible">True</property>
+                            <property name="can_focus">False</property>
+                          </object>
+                          <packing>
+                            <property name="expand">True</property>
+                            <property name="fill">True</property>
+                            <property name="position">2</property>
+                          </packing>
+                        </child>
+                        <child>
+                          <object class="GtkLabel">
+                            <property name="visible">True</property>
+                            <property name="can_focus">False</property>
+                            <property name="label" translatable="yes">PID:</property>
+                          </object>
+                          <packing>
+                            <property name="expand">False</property>
+                            <property name="fill">True</property>
+                            <property name="position">3</property>
+                          </packing>
+                        </child>
+                        <child>
+                          <object class="GtkEntry" id="pidEntry">
+                            <property name="visible">True</property>
+                            <property name="can_focus">True</property>
+                          </object>
+                          <packing>
+                            <property name="expand">False</property>
+                            <property name="fill">True</property>
+                            <property name="position">4</property>
+                          </packing>
+                        </child>
+                        <child>
+                          <object class="GtkButton" id="vidpidWrite">
+                            <property name="label" translatable="yes">Write</property>
+                            <property name="visible">True</property>
+                            <property name="can_focus">True</property>
+                            <property name="receives_default">True</property>
+                            <signal name="clicked" handler="writeVidPid_clicked" swapped="no"/>
+                          </object>
+                          <packing>
+                            <property name="expand">False</property>
+                            <property name="fill">False</property>
+                            <property name="pack_type">end</property>
+                            <property name="position">5</property>
+                          </packing>
+                        </child>
+                      </object>
+                      <packing>
+                        <property name="expand">False</property>
+                        <property name="fill">True</property>
+                        <property name="padding">2</property>
+                        <property name="position">0</property>
+                      </packing>
+                    </child>
+                    <child>
+                      <object class="GtkFrame" id="stringsFrame">
+                        <property name="visible">True</property>
+                        <property name="can_focus">False</property>
+                        <property name="label_xalign">0</property>
+                        <child>
+                          <object class="GtkBox">
+                            <property name="visible">True</property>
+                            <property name="can_focus">False</property>
+                            <property name="orientation">vertical</property>
+                            <property name="spacing">2</property>
+                            <child>
+                              <object class="GtkBox">
+                                <property name="visible">True</property>
+                                <property name="can_focus">False</property>
+                                <child>
+                                  <object class="GtkLabel">
+                                    <property name="visible">True</property>
+                                    <property name="can_focus">False</property>
+                                    <property name="label" translatable="yes">Prod String:</property>
+                                  </object>
+                                  <packing>
+                                    <property name="expand">False</property>
+                                    <property name="fill">True</property>
+                                    <property name="position">0</property>
+                                  </packing>
+                                </child>
+                                <child>
+                                  <object class="GtkEntry" id="prodEntry">
+                                    <property name="visible">True</property>
+                                    <property name="can_focus">True</property>
+                                  </object>
+                                  <packing>
+                                    <property name="expand">True</property>
+                                    <property name="fill">True</property>
+                                    <property name="position">1</property>
+                                  </packing>
+                                </child>
+                              </object>
+                              <packing>
+                                <property name="expand">False</property>
+                                <property name="fill">True</property>
+                                <property name="position">0</property>
+                              </packing>
+                            </child>
+                            <child>
+                              <object class="GtkBox">
+                                <property name="visible">True</property>
+                                <property name="can_focus">False</property>
+                                <child>
+                                  <object class="GtkLabel">
+                                    <property name="visible">True</property>
+                                    <property name="can_focus">False</property>
+                                    <property name="label" translatable="yes">Serial:</property>
+                                  </object>
+                                  <packing>
+                                    <property name="expand">False</property>
+                                    <property name="fill">True</property>
+                                    <property name="position">0</property>
+                                  </packing>
+                                </child>
+                                <child>
+                                  <object class="GtkEntry" id="serialEntry">
+                                    <property name="visible">True</property>
+                                    <property name="can_focus">True</property>
+                                  </object>
+                                  <packing>
+                                    <property name="expand">True</property>
+                                    <property name="fill">True</property>
+                                    <property name="position">1</property>
+                                  </packing>
+                                </child>
+                                <child>
+                                  <object class="GtkSeparator">
+                                    <property name="visible">True</property>
+                                    <property name="can_focus">False</property>
+                                  </object>
+                                  <packing>
+                                    <property name="expand">False</property>
+                                    <property name="fill">True</property>
+                                    <property name="position">2</property>
+                                  </packing>
+                                </child>
+                                <child>
+                                  <object class="GtkButton" id="serialWrite">
+                                    <property name="label" translatable="yes">Write</property>
+                                    <property name="visible">True</property>
+                                    <property name="can_focus">True</property>
+                                    <property name="receives_default">True</property>
+                                    <signal name="clicked" handler="writeStrings_clicked" swapped="no"/>
+                                  </object>
+                                  <packing>
+                                    <property name="expand">False</property>
+                                    <property name="fill">False</property>
+                                    <property name="pack_type">end</property>
+                                    <property name="position">3</property>
+                                  </packing>
+                                </child>
+                              </object>
+                              <packing>
+                                <property name="expand">False</property>
+                                <property name="fill">True</property>
+                                <property name="padding">2</property>
+                                <property name="position">1</property>
+                              </packing>
+                            </child>
+                            <child>
+                              <object class="GtkBox">
+                                <property name="visible">True</property>
+                                <property name="can_focus">False</property>
+                                <child>
+                                  <object class="GtkLabel">
+                                    <property name="visible">True</property>
+                                    <property name="can_focus">False</property>
+                                    <property name="label" translatable="yes">Extra ID:</property>
+                                  </object>
+                                  <packing>
+                                    <property name="expand">False</property>
+                                    <property name="fill">True</property>
+                                    <property name="position">0</property>
+                                  </packing>
+                                </child>
+                                <child>
+                                  <object class="GtkEntry" id="extraEntry">
+                                    <property name="visible">True</property>
+                                    <property name="can_focus">True</property>
+                                  </object>
+                                  <packing>
+                                    <property name="expand">True</property>
+                                    <property name="fill">True</property>
+                                    <property name="position">1</property>
+                                  </packing>
+                                </child>
+                              </object>
+                              <packing>
+                                <property name="expand">False</property>
+                                <property name="fill">True</property>
+                                <property name="padding">2</property>
+                                <property name="position">2</property>
+                              </packing>
+                            </child>
+                          </object>
+                        </child>
+                        <child type="label">
+                          <object class="GtkLabel">
+                            <property name="visible">True</property>
+                            <property name="can_focus">False</property>
+                            <property name="label" translatable="yes">EEprom Strings</property>
+                          </object>
+                        </child>
+                      </object>
+                      <packing>
+                        <property name="expand">False</property>
+                        <property name="fill">True</property>
+                        <property name="position">1</property>
+                      </packing>
+                    </child>
+                    <child>
+                      <object class="GtkFrame" id="spdtPolarityFrame">
+                        <property name="visible">True</property>
+                        <property name="can_focus">False</property>
+                        <property name="label_xalign">0</property>
+                        <child>
+                          <object class="GtkBox" id="PolarityBox">
+                            <property name="visible">True</property>
+                            <property name="can_focus">False</property>
+                            <child>
+                              <object class="GtkBox">
+                                <property name="visible">True</property>
+                                <property name="can_focus">False</property>
+                                <property name="orientation">vertical</property>
+                                <child>
+                                  <object class="GtkLabel">
+                                    <property name="visible">True</property>
+                                    <property name="can_focus">False</property>
+                                    <property name="label" translatable="yes">S1 Polarity</property>
+                                  </object>
+                                  <packing>
+                                    <property name="expand">False</property>
+                                    <property name="fill">True</property>
+                                    <property name="position">0</property>
+                                  </packing>
+                                </child>
+                                <child>
+                                  <object class="GtkButtonBox">
+                                    <property name="visible">True</property>
+                                    <property name="can_focus">False</property>
+                                    <property name="orientation">vertical</property>
+                                    <property name="layout_style">start</property>
+                                    <child>
+                                      <object class="GtkRadioButton" id="s1High">
+                                        <property name="label" translatable="yes">Pulse High</property>
+                                        <property name="visible">True</property>
+                                        <property name="can_focus">True</property>
+                                        <property name="receives_default">False</property>
+                                        <property name="active">True</property>
+                                        <property name="draw_indicator">True</property>
+                                      </object>
+                                      <packing>
+                                        <property name="expand">True</property>
+                                        <property name="fill">True</property>
+                                        <property name="position">0</property>
+                                      </packing>
+                                    </child>
+                                    <child>
+                                      <object class="GtkRadioButton" id="s1Low">
+                                        <property name="label" translatable="yes">Pulse Low</property>
+                                        <property name="visible">True</property>
+                                        <property name="can_focus">True</property>
+                                        <property name="receives_default">False</property>
+                                        <property name="active">True</property>
+                                        <property name="draw_indicator">True</property>
+                                        <property name="group">s1High</property>
+                                      </object>
+                                      <packing>
+                                        <property name="expand">True</property>
+                                        <property name="fill">True</property>
+                                        <property name="position">1</property>
+                                      </packing>
+                                    </child>
+                                  </object>
+                                  <packing>
+                                    <property name="expand">False</property>
+                                    <property name="fill">True</property>
+                                    <property name="position">1</property>
+                                  </packing>
+                                </child>
+                              </object>
+                              <packing>
+                                <property name="expand">True</property>
+                                <property name="fill">True</property>
+                                <property name="position">0</property>
+                              </packing>
+                            </child>
+                            <child>
+                              <object class="GtkBox">
+                                <property name="visible">True</property>
+                                <property name="can_focus">False</property>
+                                <property name="orientation">vertical</property>
+                                <child>
+                                  <object class="GtkLabel">
+                                    <property name="visible">True</property>
+                                    <property name="can_focus">False</property>
+                                    <property name="label" translatable="yes">S2 Polarity</property>
+                                  </object>
+                                  <packing>
+                                    <property name="expand">False</property>
+                                    <property name="fill">True</property>
+                                    <property name="position">0</property>
+                                  </packing>
+                                </child>
+                                <child>
+                                  <object class="GtkButtonBox">
+                                    <property name="visible">True</property>
+                                    <property name="can_focus">False</property>
+                                    <property name="orientation">vertical</property>
+                                    <property name="layout_style">start</property>
+                                    <child>
+                                      <object class="GtkRadioButton" id="s2High">
+                                        <property name="label" translatable="yes">Pulse High</property>
+                                        <property name="visible">True</property>
+                                        <property name="can_focus">True</property>
+                                        <property name="receives_default">False</property>
+                                        <property name="active">True</property>
+                                        <property name="draw_indicator">True</property>
+                                      </object>
+                                      <packing>
+                                        <property name="expand">True</property>
+                                        <property name="fill">True</property>
+                                        <property name="position">0</property>
+                                      </packing>
+                                    </child>
+                                    <child>
+                                      <object class="GtkRadioButton" id="s2Low">
+                                        <property name="label" translatable="yes">Pulse Low</property>
+                                        <property name="visible">True</property>
+                                        <property name="can_focus">True</property>
+                                        <property name="receives_default">False</property>
+                                        <property name="active">True</property>
+                                        <property name="draw_indicator">True</property>
+                                        <property name="group">s2High</property>
+                                      </object>
+                                      <packing>
+                                        <property name="expand">True</property>
+                                        <property name="fill">True</property>
+                                        <property name="position">1</property>
+                                      </packing>
+                                    </child>
+                                  </object>
+                                  <packing>
+                                    <property name="expand">False</property>
+                                    <property name="fill">True</property>
+                                    <property name="position">1</property>
+                                  </packing>
+                                </child>
+                              </object>
+                              <packing>
+                                <property name="expand">True</property>
+                                <property name="fill">True</property>
+                                <property name="position">1</property>
+                              </packing>
+                            </child>
+                            <child>
+                              <object class="GtkButton" id="polarityWrite">
+                                <property name="label" translatable="yes">Write</property>
+                                <property name="visible">True</property>
+                                <property name="can_focus">True</property>
+                                <property name="receives_default">True</property>
+                                <signal name="clicked" handler="writePolarity_clicked" swapped="no"/>
+                              </object>
+                              <packing>
+                                <property name="expand">False</property>
+                                <property name="fill">False</property>
+                                <property name="pack_type">end</property>
+                                <property name="position">2</property>
+                              </packing>
+                            </child>
+                          </object>
+                        </child>
+                        <child type="label">
+                          <object class="GtkLabel">
+                            <property name="visible">True</property>
+                            <property name="can_focus">False</property>
+                            <property name="label" translatable="yes">SPDT Polarity</property>
+                          </object>
+                        </child>
+                      </object>
+                      <packing>
+                        <property name="expand">False</property>
+                        <property name="fill">True</property>
+                        <property name="position">2</property>
+                      </packing>
+                    </child>
+                    <child>
+                      <object class="GtkBox">
+                        <property name="visible">True</property>
+                        <property name="can_focus">False</property>
+                        <child>
+                          <object class="GtkButton" id="dumpEEbutton">
+                            <property name="label" translatable="yes">Dump</property>
+                            <property name="visible">True</property>
+                            <property name="can_focus">True</property>
+                            <property name="receives_default">True</property>
+                            <signal name="clicked" handler="dumpButton_clicked" swapped="no"/>
+                          </object>
+                          <packing>
+                            <property name="expand">False</property>
+                            <property name="fill">True</property>
+                            <property name="position">0</property>
+                          </packing>
+                        </child>
+                        <child>
+                          <object class="GtkSeparator">
+                            <property name="visible">True</property>
+                            <property name="can_focus">False</property>
+                          </object>
+                          <packing>
+                            <property name="expand">True</property>
+                            <property name="fill">True</property>
+                            <property name="position">1</property>
+                          </packing>
+                        </child>
+                        <child>
+                          <object class="GtkButton" id="eraseEEbutton">
+                            <property name="label" translatable="yes">Erase EEprom</property>
+                            <property name="visible">True</property>
+                            <property name="can_focus">True</property>
+                            <property name="receives_default">True</property>
+                            <signal name="clicked" handler="eraseEEbutton_clicked_cb" swapped="no"/>
+                          </object>
+                          <packing>
+                            <property name="expand">False</property>
+                            <property name="fill">True</property>
+                            <property name="position">2</property>
+                          </packing>
+                        </child>
+                      </object>
+                      <packing>
+                        <property name="expand">False</property>
+                        <property name="fill">True</property>
+                        <property name="padding">3</property>
+                        <property name="pack_type">end</property>
+                        <property name="position">3</property>
+                      </packing>
+                    </child>
+                  </object>
+                </child>
+              </object>
+              <packing>
+                <property name="position">2</property>
+              </packing>
+            </child>
+            <child type="tab">
+              <object class="GtkLabel">
+                <property name="visible">True</property>
+                <property name="can_focus">False</property>
+                <property name="label" translatable="yes">EEprom</property>
+              </object>
+              <packing>
+                <property name="position">2</property>
+                <property name="tab_fill">False</property>
+              </packing>
+            </child>
+          </object>
+          <packing>
+            <property name="expand">True</property>
+            <property name="fill">True</property>
+            <property name="position">1</property>
+          </packing>
+        </child>
+        <child>
+          <object class="GtkStatusbar" id="statusbar">
+            <property name="visible">True</property>
+            <property name="can_focus">False</property>
+            <property name="margin_left">10</property>
+            <property name="margin_right">10</property>
+            <property name="margin_start">10</property>
+            <property name="margin_end">10</property>
+            <property name="margin_top">6</property>
+            <property name="margin_bottom">6</property>
+            <property name="orientation">vertical</property>
+            <property name="spacing">2</property>
+          </object>
+          <packing>
+            <property name="expand">False</property>
+            <property name="fill">True</property>
+            <property name="position">2</property>
+          </packing>
+        </child>
+      </object>
+    </child>
+    <child type="titlebar">
+      <placeholder/>
+    </child>
+  </object>
+  <object class="GtkDialog" id="OKtoWriteDialog">
+    <property name="can_focus">False</property>
+    <property name="type_hint">dialog</property>
+    <property name="transient_for">mainTopWin</property>
+    <child internal-child="vbox">
+      <object class="GtkBox">
+        <property name="can_focus">False</property>
+        <property name="orientation">vertical</property>
+        <property name="spacing">2</property>
+        <child internal-child="action_area">
+          <object class="GtkButtonBox">
+            <property name="can_focus">False</property>
+            <property name="layout_style">end</property>
+            <child>
+              <object class="GtkButton">
+                <property name="label">gtk-cancel</property>
+                <property name="visible">True</property>
+                <property name="can_focus">True</property>
+                <property name="receives_default">True</property>
+                <property name="use_stock">True</property>
+                <signal name="clicked" handler="writeCancelClicked" object="OKtoWriteDialog" swapped="no"/>
+              </object>
+              <packing>
+                <property name="expand">True</property>
+                <property name="fill">True</property>
+                <property name="position">0</property>
+              </packing>
+            </child>
+            <child>
+              <object class="GtkButton">
+                <property name="label">gtk-ok</property>
+                <property name="visible">True</property>
+                <property name="can_focus">True</property>
+                <property name="receives_default">True</property>
+                <property name="use_stock">True</property>
+                <signal name="clicked" handler="writeConfirmedClicked" object="OKtoWriteDialog" swapped="no"/>
+              </object>
+              <packing>
+                <property name="expand">True</property>
+                <property name="fill">True</property>
+                <property name="position">1</property>
+              </packing>
+            </child>
+          </object>
+          <packing>
+            <property name="expand">False</property>
+            <property name="fill">False</property>
+            <property name="position">0</property>
+          </packing>
+        </child>
+        <child>
+          <object class="GtkLabel" id="OKtoWriteLabel">
+            <property name="visible">True</property>
+            <property name="can_focus">False</property>
+            <property name="label" translatable="yes">
+
+OK to Write?</property>
+            <attributes>
+              <attribute name="weight" value="bold"/>
+              <attribute name="scale" value="1.5"/>
+            </attributes>
+          </object>
+          <packing>
+            <property name="expand">False</property>
+            <property name="fill">True</property>
+            <property name="position">1</property>
+          </packing>
+        </child>
+      </object>
+    </child>
+    <child>
+      <placeholder/>
+    </child>
+  </object>
+  <object class="GtkAboutDialog" id="aboutDialog">
+    <property name="can_focus">False</property>
+    <property name="type_hint">dialog</property>
+    <property name="transient_for">mainTopWin</property>
+    <property name="program_name">AttenSwitchTool</property>
+    <property name="version">1.0</property>
+    <property name="copyright" translatable="yes">2015, 2016, 2017 Mike Ferrara</property>
+    <property name="comments" translatable="yes">Attenuator Switch tool. See also: https://github.com/mikef5410/USB_SPDT
+
+</property>
+    <property name="website">https://github.com/mikef5410/USB_Attenuator_Switch_Stacklight</property>
+    <property name="website_label" translatable="yes">USB_Attenuator_Switch_Stacklight Site.</property>
+    <property name="authors">Mike Ferrara
+mikef-at-mrf.sonoma.ca.us</property>
+    <property name="logo_icon_name">system-run</property>
+    <property name="license_type">mit-x11</property>
+    <child internal-child="vbox">
+      <object class="GtkBox">
+        <property name="can_focus">False</property>
+        <property name="orientation">vertical</property>
+        <property name="spacing">2</property>
+        <child internal-child="action_area">
+          <object class="GtkButtonBox">
+            <property name="can_focus">False</property>
+            <property name="layout_style">end</property>
+          </object>
+          <packing>
+            <property name="expand">False</property>
+            <property name="fill">False</property>
+            <property name="position">0</property>
+          </packing>
+        </child>
+      </object>
+    </child>
+    <child>
+      <placeholder/>
+    </child>
+  </object>
+  <object class="GtkDialog" id="eeDumpWindow">
+    <property name="can_focus">False</property>
+    <property name="default_width">590</property>
+    <property name="default_height">500</property>
+    <property name="type_hint">dialog</property>
+    <property name="transient_for">mainTopWin</property>
+    <child internal-child="vbox">
+      <object class="GtkBox">
+        <property name="can_focus">False</property>
+        <property name="orientation">vertical</property>
+        <property name="spacing">2</property>
+        <child internal-child="action_area">
+          <object class="GtkButtonBox">
+            <property name="can_focus">False</property>
+            <property name="layout_style">end</property>
+            <child>
+              <placeholder/>
+            </child>
+            <child>
+              <object class="GtkButton">
+                <property name="label">gtk-close</property>
+                <property name="visible">True</property>
+                <property name="can_focus">True</property>
+                <property name="receives_default">True</property>
+                <property name="use_stock">True</property>
+                <signal name="clicked" handler="dumpCloseClicked" object="eeDumpWindow" swapped="no"/>
+              </object>
+              <packing>
+                <property name="expand">True</property>
+                <property name="fill">True</property>
+                <property name="position">1</property>
+              </packing>
+            </child>
+          </object>
+          <packing>
+            <property name="expand">False</property>
+            <property name="fill">False</property>
+            <property name="position">0</property>
+          </packing>
+        </child>
+        <child>
+          <object class="GtkScrolledWindow">
+            <property name="visible">True</property>
+            <property name="can_focus">True</property>
+            <property name="shadow_type">in</property>
+            <child>
+              <object class="GtkTextView" id="eeDumpTextView">
+                <property name="visible">True</property>
+                <property name="can_focus">True</property>
+                <property name="monospace">True</property>
+              </object>
+            </child>
+          </object>
+          <packing>
+            <property name="expand">True</property>
+            <property name="fill">True</property>
+            <property name="position">1</property>
+          </packing>
+        </child>
+      </object>
+    </child>
+    <child>
+      <placeholder/>
+    </child>
+  </object>
+</interface>
