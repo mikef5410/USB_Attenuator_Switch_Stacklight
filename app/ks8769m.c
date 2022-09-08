@@ -15,16 +15,24 @@
 #define GLOBAL_KS8769M
 #include "ks8769m.h"
 
-#define KS8769M_DELAY 200
+#define KS8769M_DELAY 100
 
 #define pulseCoil(coil) gpio_set(coil);delayms(KS8769M_DELAY);gpio_clear(coil)
 
 void deselectAll8769(void) {
-  pulseCoil(S1U);
+  gpio_set(S1U); delayms(60);
+  gpio_set(S2U); delayms(60);
+  gpio_set(S3U); delayms(60);
+  gpio_set(S4U); delayms(60);
+  gpio_set(S5U); delayms(60);
+  gpio_clear(GPIOC,GPIO0|GPIO2|GPIO4|GPIO6);
+  gpio_clear(GPIOA,GPIO4);
+
+  /*  pulseCoil(S1U);
   pulseCoil(S2U);
   pulseCoil(S3U);
   pulseCoil(S4U);
-  pulseCoil(S5U);
+  pulseCoil(S5U);*/
 }
 
 
