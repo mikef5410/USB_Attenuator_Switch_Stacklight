@@ -417,7 +417,7 @@ $err will be either AttenSwitch->SUCCESS or AttenSwitch->FAIL.
 
 =cut
 
-sub sp8t {
+sub sp6t {
   my $self   = shift;
   my $sel    = shift;                      #AttenSwitch::SP8TSETTING
   my $outPkt = AttenSwitch::Packet->new(

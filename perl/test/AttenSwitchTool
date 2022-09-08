@@ -181,6 +181,7 @@ SW: {
     if ( $PID == 0x0001 ) {    #Stacklight
       $builder->get_object("spdtFrame")->set_sensitive(0);
       $builder->get_object("sp8tFrame")->set_sensitive(0);
+      $builder->get_object("sp6tFrame")->set_sensitive(0);
       $builder->get_object("attenFrame")->set_sensitive(0);
       $builder->get_object("spdtPolarityFrame")->set_sensitive(0);
       last SW;
@@ -188,6 +189,7 @@ SW: {
     if ( $PID == 0x0002 ) {    #MapleOLT test rig
       $builder->get_object("spdtFrame")->set_sensitive(1);
       $builder->get_object("sp8tFrame")->set_sensitive(1);
+      $builder->get_object("sp6tFrame")->set_sensitive(0);
       $builder->get_object("attenFrame")->set_sensitive(0);
       $builder->get_object("spdtPolarityFrame")->set_sensitive(1);
       last SW;
@@ -195,6 +197,7 @@ SW: {
     if ( $PID == 0x0003 ) {    #Attenuator
       $builder->get_object("spdtFrame")->set_sensitive(0);
       $builder->get_object("sp8tFrame")->set_sensitive(0);
+      $builder->get_object("sp6tFrame")->set_sensitive(0);
       $builder->get_object("attenFrame")->set_sensitive(1);
       $builder->get_object("spdtPolarityFrame")->set_sensitive(0);
       last SW;
@@ -202,11 +205,27 @@ SW: {
     if ( $PID == 0x0004 ) {    #Dual SPDT
       $builder->get_object("spdtFrame")->set_sensitive(1);
       $builder->get_object("sp8tFrame")->set_sensitive(0);
+      $builder->get_object("sp6tFrame")->set_sensitive(0);
       $builder->get_object("attenFrame")->set_sensitive(0);
       $builder->get_object("spdtPolarityFrame")->set_sensitive(1);
       last SW;
     }
-    
+    if ( $PID == 0x0005 ) {    #Pressure sensor
+      $builder->get_object("spdtFrame")->set_sensitive(0);
+      $builder->get_object("sp8tFrame")->set_sensitive(0);
+      $builder->get_object("sp6tFrame")->set_sensitive(0);
+      $builder->get_object("attenFrame")->set_sensitive(0);
+      $builder->get_object("spdtPolarityFrame")->set_sensitive(0);
+      last SW;
+    }    
+    if ( $PID == 0x0006 ) {    #8769M
+      $builder->get_object("spdtFrame")->set_sensitive(0);
+      $builder->get_object("sp8tFrame")->set_sensitive(0);
+      $builder->get_object("sp6tFrame")->set_sensitive(1);
+      $builder->get_object("attenFrame")->set_sensitive(0);
+      $builder->get_object("spdtPolarityFrame")->set_sensitive(0);
+      last SW;
+    }    
     #unknown
     $builder->get_object("spdtFrame")->set_sensitive(1);
     $builder->get_object("sp8tFrame")->set_sensitive(1);
@@ -308,6 +327,48 @@ SW: {
     }
   }
 }
+
+sub sp6t_clicked {
+  my $widget = shift;
+  my $data   = shift;
+
+  #We get triggered twice. Once for the button that goes on, and once for the button that goes off.
+  #Ignore one of them
+  state $secondEvent = 0;
+  if ( $secondEvent == 1 ) {
+    $secondEvent = 0;
+    return;
+  }
+  $secondEvent = 1;
+  return if ( !defined($currentDev) );
+SW: {
+    if ( $builder->get_object("sp6t_j1")->get_active() ) {
+      $currentDev->sp6t(AttenSwitch::SP8TSETTING::J1);
+      last SW;
+    }
+    if ( $builder->get_object("sp6t_j2")->get_active() ) {
+      $currentDev->sp6t(AttenSwitch::SP8TSETTING::J2);
+      last SW;
+    }
+    if ( $builder->get_object("sp6t_j3")->get_active() ) {
+      $currentDev->sp6t(AttenSwitch::SP8TSETTING::J3);
+      last SW;
+    }
+    if ( $builder->get_object("sp6t_j4")->get_active() ) {
+      $currentDev->sp6t(AttenSwitch::SP8TSETTING::J4);
+      last SW;
+    }
+    if ( $builder->get_object("sp6t_j5")->get_active() ) {
+      $currentDev->sp6t(AttenSwitch::SP8TSETTING::J5);
+      last SW;
+    }
+    if ( $builder->get_object("sp6t_j6")->get_active() ) {
+      $currentDev->sp6t(AttenSwitch::SP8TSETTING::J6);
+      last SW;
+    }
+  }
+}
+
 
 sub attenCtrlAdj_value_changed_cb {
   my $widget = shift;
