@@ -1088,6 +1088,7 @@ use Class::Enum qw(SW1 SW2);
 
 package AttenSwitch::SP8TSETTING;
 use Class::Enum qw(J1 J2 J3 J4 J5 J6 J7 J8);
+our @fromOrdinal = ( undef,  AttenSwitch::SP8TSETTING::J1, AttenSwitch::SP8TSETTING::J2, AttenSwitch::SP8TSETTING::J3, AttenSwitch::SP8TSETTING::J4, AttenSwitch::SP8TSETTING::J5, AttenSwitch::SP8TSETTING::J6, AttenSwitch::SP8TSETTING::J7, AttenSwitch::SP8TSETTING::J8 );
 1;
 
 package AttenSwitch::PRODUCTID;
