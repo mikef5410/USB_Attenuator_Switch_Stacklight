@@ -9,6 +9,7 @@ endif
 
 OPENOCDDIR:=/opt/oocd
 TOOLDIR:=/opt/cross-arm-linaro
+#TOOLDIR:=/opt/arm-gnu-toolchain-12.2.mpacbti-bet1-x86_64-arm-none-eabi
 #TOOLDIR:=/opt/cross-arm-linaro-debuggable
 PATH:=$(TOOLDIR)/bin:$(OPENOCDDIR)/bin:$(PATH)
 OPENOCD=openocd

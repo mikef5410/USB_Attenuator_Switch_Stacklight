@@ -21,7 +21,7 @@ CALC_OBJS2 = $(addsuffix .o, $(basename $(notdir $(1))))
 PROG:=APP
 
 #CFLAGS+=-ggdb -O0 -std=gnu99  -ffunction-sections -fdata-sections
-CFLAGS+=-O2 -D__STM32__ -DSTM32F4 -ggdb -std=gnu99 -fomit-frame-pointer -falign-functions=16 -ffunction-sections -fdata-sections
+CFLAGS+=-O2 -D__STM32__ -DSTM32F4 -ggdb -std=gnu99 -fomit-frame-pointer -falign-functions=16 -ffunction-sections -fdata-sections -mgeneral-regs-only
 
 #CFLAGS+= -fshort-wchar -mabi=aapcs -mapcs-frame
 WARNINGS:= -Wall -Wextra
