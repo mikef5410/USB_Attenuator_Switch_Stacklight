@@ -174,6 +174,7 @@ class_has 'validVidPids' => (
 #  0x0003 - USB Attenuator controller
 #  0x0004 - USB Dual SPDT
 #  0x0005 - USB air pressure sensor
+#  0x0006 - USB 8769M Keysight 8769M SP6T
 class_has 'SUCCESS'    => ( is => 'ro', default => 0 );
 class_has 'FAIL'       => ( is => 'ro', default => -1 );
 class_has 'CMD_OUT_EP' => ( is => 'rw', default => 0x1 );

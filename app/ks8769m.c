@@ -28,6 +28,10 @@ void deselectAll8769(void) {
   gpio_clear(GPIOC,GPIO0|GPIO2|GPIO4|GPIO6);
   gpio_clear(GPIOA,GPIO4);
 
+  gpio_clear(LED1);
+  gpio_clear(LED2);
+  gpio_clear(LED3);
+  
   /*  pulseCoil(S1U);
   pulseCoil(S2U);
   pulseCoil(S3U);
@@ -35,24 +39,38 @@ void deselectAll8769(void) {
   pulseCoil(S5U);*/
 }
 
-
 void set8769(sp8tSel_t sel) {
   deselectAll8769();
   switch (sel) {
   case J1:
     pulseCoil(S1D);
+    gpio_set(LED1);
+    gpio_clear(LED2);
+    gpio_clear(LED3);
     break;
   case J2:
     pulseCoil(S2D);
+    gpio_clear(LED1);
+    gpio_set(LED2);
+    gpio_clear(LED3);
     break;
   case J3:
     pulseCoil(S3D);
+    gpio_set(LED1);
+    gpio_set(LED2);
+    gpio_clear(LED3);
     break;
   case J4:
     pulseCoil(S4D);
+    gpio_clear(LED1);
+    gpio_clear(LED2);
+    gpio_set(LED3);
     break;
   case J5:
     pulseCoil(S5D);
+    gpio_set(LED1);
+    gpio_clear(LED2);
+    gpio_set(LED3);
     break;
   case J6:
     deselectAll8769();
