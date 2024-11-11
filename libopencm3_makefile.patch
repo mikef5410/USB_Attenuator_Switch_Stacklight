@@ -1,0 +1,14 @@
+diff --git a/Makefile b/Makefile
+index 01e0cb46..f9918124 100644
+--- a/Makefile
++++ b/Makefile
+@@ -32,7 +32,8 @@ INSTALL		:= install
+ 
+ space:=
+ space+=
+-SRCLIBDIR:= $(subst $(space),\$(space),$(realpath lib))
++#SRCLIBDIR:= $(subst $(space),\$(space),$(realpath lib))
++SRCLIBDIR:= $(realpath lib)
+ 
+ TARGETS:= stm32/f0 stm32/f1 stm32/f2 stm32/f3 stm32/f4 stm32/l0 stm32/l1 \
+ 	  lpc13xx lpc17xx lpc43xx/m4 lpc43xx/m0 lm3s lm4f \

@@ -21,6 +21,10 @@ cp -Rf ${freertos}/Source/include FreeRTOS/Source
 cp -Rf ${freertos}/Source/portable/GCC/ARM_CM* FreeRTOS/Source/portable/GCC
 cp -Rf ${freertos}/Source/portable/MemMang FreeRTOS/Source/portable
 
+cd external/libopencm3
+patch -p1 < ../../libopencm3_makefile.patch
+cd ../..
+
 cd app
 rm -f usb_fx07_common.h usb_private.h 
 ln -s ../external/libopencm3/lib/usb/usb_fx07_common.h .
